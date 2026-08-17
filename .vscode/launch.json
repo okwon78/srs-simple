@@ -1,0 +1,87 @@
+{
+    // 어떤 파일에 커서가 있든 F5는 항상 build/srs_simple 을 실행하고
+    // src/main/srs_main_server.cpp 의 main() 에서 멈춘다 (stopAtEntry).
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug srs_simple (main)",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/srs_simple",
+            "args": [],
+            "stopAtEntry": true,
+            "cwd": "${workspaceFolder}",
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "lldb",
+            "preLaunchTask": "cmake: build srs_simple",
+            "presentation": {
+                "order": 1,
+                "group": "srs"
+            }
+        },
+        {
+            "name": "Debug srs_utest (all)",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/srs_utest",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "lldb",
+            "preLaunchTask": "cmake: build srs_utest",
+            "presentation": {
+                "order": 2,
+                "group": "srs"
+            }
+        },
+        {
+            "name": "Debug srs_utest (filter…)",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/srs_utest",
+            "args": [
+                "--gtest_filter=${input:gtestFilter}"
+            ],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "lldb",
+            "preLaunchTask": "cmake: build srs_utest",
+            "presentation": {
+                "order": 3,
+                "group": "srs"
+            }
+        },
+        {
+            // cpptools 디버깅이 macOS에서 말썽이면 이쪽을 쓴다 (lldb-dap 확장 사용).
+            // stopOnEntry는 dyld에서 멈추므로, main 브레이크포인트를 직접 건다.
+            "name": "Debug srs_simple (lldb-dap 대체)",
+            "type": "lldb-dap",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/srs_simple",
+            "args": [],
+            "cwd": "${workspaceFolder}",
+            "stopOnEntry": false,
+            "preRunCommands": [
+                "breakpoint set --name main"
+            ],
+            "preLaunchTask": "cmake: build srs_simple",
+            "presentation": {
+                "order": 4,
+                "group": "srs"
+            }
+        }
+    ],
+    "inputs": [
+        {
+            "id": "gtestFilter",
+            "type": "promptString",
+            "description": "gtest 필터 (예: ProtocolStackTest.*)",
+            "default": "*"
+        }
+    ]
+}

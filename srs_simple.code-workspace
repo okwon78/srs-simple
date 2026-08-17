@@ -1,0 +1,25 @@
+{
+    "folders": [
+        {
+            "name": "srs_simple",
+            "path": "."
+        },
+        {
+            "name": "srs (reference)",
+            "path": "../srs"
+        }
+    ],
+    "settings": {
+        "files.associations": {
+            "*.hpp": "cpp",
+            "*.cpp": "cpp"
+        },
+        "search.exclude": {
+            "**/objs/**": true,
+            "**/3rdparty/**": true
+        },
+        "C_Cpp.default.browse.path": [
+            "${workspaceFolder:srs (reference)}/trunk/src"
+        ]
+    }
+}

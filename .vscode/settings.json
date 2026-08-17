@@ -1,0 +1,21 @@
+{
+    "files.associations": {
+        "*.hpp": "cpp",
+        "*.cpp": "cpp"
+    },
+    "C_Cpp.default.configurationProvider": null,
+    "search.useIgnoreFiles": true,
+    "search.exclude": {
+        "**/objs/**": true,
+        "**/3rdparty/**": true
+    },
+    // 빌드/디버그는 .vscode/tasks.json + launch.json 으로만 한다.
+    // CMake Tools가 별도 빌드 디렉터리를 만들거나 킷 선택을 묻지 않게 막는다.
+    "cmake.configureOnOpen": false,
+    "cmake.configureOnEdit": false,
+    "cmake.automaticReconfigure": false,
+    "cmake.buildDirectory": "${workspaceFolder}/build",
+    "cmake.buildBeforeRun": false,
+    // preLaunchTask가 실패하면 디버깅을 시작하지 않고 문제를 보여준다.
+    "debug.onTaskErrors": "showErrors"
+}

@@ -1,0 +1,11 @@
+# 빌드 산출물
+build/
+compile_commands.json
+
+# 테스트용 미디어 (README §데모의 ffmpeg 명령으로 생성)
+*.mp4
+
+# 로컬 설정 / 런타임 파일
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
+.DS_Store

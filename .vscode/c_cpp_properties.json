@@ -1,0 +1,31 @@
+{
+  "version": 4,
+  "configurations": [
+    {
+      "name": "Mac (srs_simple)",
+      // CMake가 생성한 정확한 인클루드 경로를 그대로 사용한다.
+      // 없으면 `cmake -S . -B build`로 생성 (CMAKE_EXPORT_COMPILE_COMMANDS).
+      "compileCommands": "${workspaceFolder}/build/compile_commands.json",
+      // compileCommands에 없는 파일(신규 파일 등)용 폴백.
+      // 주의: 원본 SRS의 src/* 는 넣지 않는다 — 파일명이 1:1로 같아서
+      // srs_app_config.hpp 등이 원본 헤더로 가려진다 (SrsConfig vs SrsSimpleConfig).
+      "includePath": [
+        "${workspaceFolder}/src/core",
+        "${workspaceFolder}/src/kernel",
+        "${workspaceFolder}/src/protocol",
+        "${workspaceFolder}/src/app",
+        "${workspaceFolder}/utest"
+      ],
+      "browse": {
+        // 심볼 검색/원본 대조용. browse.path는 #include 해석에 쓰이지 않는다.
+        "path": ["${workspaceFolder}/src", "${workspaceFolder}/utest"],
+        "limitSymbolsToIncludedHeaders": false
+      },
+      "macFrameworkPath": ["/System/Library/Frameworks", "/Library/Frameworks"],
+      "compilerPath": "/usr/bin/clang++",
+      "cStandard": "c11",
+      "cppStandard": "c++11",
+      "intelliSenseMode": "macos-clang-arm64"
+    }
+  ]
+}

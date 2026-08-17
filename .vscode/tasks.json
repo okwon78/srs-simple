@@ -1,0 +1,93 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "cmake: configure",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "-S", "${workspaceFolder}",
+                "-B", "${workspaceFolder}/build",
+                "-DCMAKE_BUILD_TYPE=Debug",
+                "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON"
+            ],
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "silent",
+                "panel": "shared",
+                "clear": true
+            },
+            "detail": "build/ 디렉터리 생성 및 재구성 (Debug, -g)"
+        },
+        {
+            "label": "cmake: build srs_simple",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "--build", "${workspaceFolder}/build",
+                "--target", "srs_simple",
+                "-j", "8"
+            ],
+            "dependsOn": "cmake: configure",
+            "problemMatcher": ["$gcc"],
+            "presentation": {
+                "reveal": "silent",
+                "panel": "shared"
+            },
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "detail": "서버 바이너리 빌드 (F5의 preLaunchTask)"
+        },
+        {
+            "label": "cmake: build srs_utest",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "--build", "${workspaceFolder}/build",
+                "--target", "srs_utest",
+                "-j", "8"
+            ],
+            "dependsOn": "cmake: configure",
+            "problemMatcher": ["$gcc"],
+            "presentation": {
+                "reveal": "silent",
+                "panel": "shared"
+            },
+            "detail": "유닛테스트 바이너리 빌드"
+        },
+        {
+            "label": "cmake: build all",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "--build", "${workspaceFolder}/build",
+                "-j", "8"
+            ],
+            "dependsOn": "cmake: configure",
+            "problemMatcher": ["$gcc"],
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            },
+            "detail": "srs_simple + srs_utest 전부 빌드"
+        },
+        {
+            "label": "run: srs_utest",
+            "type": "shell",
+            "command": "${workspaceFolder}/build/srs_utest",
+            "dependsOn": "cmake: build srs_utest",
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            },
+            "group": {
+                "kind": "test",
+                "isDefault": true
+            },
+            "detail": "전체 유닛테스트 실행 (CLAUDE.md §6)"
+        }
+    ]
+}
