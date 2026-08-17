@@ -33,10 +33,18 @@ RTMP로 서버에 붙는 구조였다.
 Flash는 2020년에 공식적으로 죽었다. 그런데 RTMP는 2026년 현재도 방송 파이프라인의
 **ingest(송출) 구간 표준**이다. OBS에서 "방송 시작"을 누르면 지금도 RTMP가 나간다:
 
-```text
-[OBS / ffmpeg]  ──RTMP──▶  [미디어 서버]  ──HLS/DASH/WebRTC──▶  [시청자]
-   (ingest 구간:                (배포 구간: 여기는 Flash 죽으면서
-    RTMP가 여전히 표준)           HTTP 기반 프로토콜로 세대 교체됨)
+```mermaid
+flowchart LR
+    subgraph ING["ingest 구간 — RTMP가 여전히 표준"]
+        E["OBS / ffmpeg<br/>하드웨어 인코더"]
+    end
+    S["미디어 서버<br/>srs_simple · SRS · nginx-rtmp"]
+    subgraph DIST["배포 구간 — Flash 사후 HTTP 기반으로 세대 교체"]
+        V["시청자<br/>브라우저 · 모바일 앱"]
+    end
+
+    E -- "RTMP" --> S
+    S -- "HLS / DASH / WebRTC" --> V
 ```
 
 시청자 쪽(배포 구간)은 브라우저에서 Flash가 사라지면서 HLS/DASH/WebRTC로 교체됐지만,
@@ -58,19 +66,20 @@ Flash는 2020년에 공식적으로 죽었다. 그런데 RTMP는 2026년 현재�
 
 RTMP를 처음 볼 때 가장 중요한 그림이다. RTMP는 TCP 위에 **두 개의 층**을 더 쌓는다:
 
-```text
-┌─────────────────────────────────────────────────────────┐
-│  메시지 스트림 (Message Stream)                            │
-│  "논리적 대화" — connect 커맨드, 오디오 프레임, 비디오 프레임    │
-│  단위: Message (type + timestamp + stream_id + payload)  │
-├─────────────────────────────────────────────────────────┤
-│  청크 스트림 (Chunk Stream)                                │
-│  "전송 다중화" — 메시지를 잘게 쪼개 인터리빙                    │
-│  단위: Chunk (기본 최대 128바이트 조각)                       │
-├─────────────────────────────────────────────────────────┤
-│  TCP                                                     │
-│  신뢰성 있는 바이트 스트림 (순서 보장, 유실 없음)                │
-└─────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph L3["③ 메시지 스트림 — 논리적 대화"]
+        M["단위: <b>Message</b><br/>type + timestamp + stream_id + payload<br/><br/>connect 커맨드 · 오디오 프레임 · 비디오 프레임"]
+    end
+    subgraph L2["② 청크 스트림 — 전송 다중화"]
+        C["단위: <b>Chunk</b><br/>메시지를 chunk_size 이하 조각으로 쪼개 인터리빙<br/><br/>기본 128바이트 · 협상으로 확대"]
+    end
+    subgraph L1["① TCP"]
+        T["단위: <b>바이트</b><br/>신뢰성 있는 바이트 스트림<br/><br/>순서 보장 · 유실 없음 · 경계 없음"]
+    end
+
+    M -- "송신: 쪼갠다 ↓ · 수신: 재조립한다 ↑" --> C
+    C -- "송신: write ↓ · 수신: read ↑" --> T
 ```
 
 - **TCP**는 그저 바이트를 순서대로 배달한다. 어디까지가 한 덩어리인지 모른다.
@@ -86,16 +95,23 @@ RTMP를 처음 볼 때 가장 중요한 그림이다. RTMP는 TCP 위에 **두 �
 
 ### 2.1 Message — 논리 단위
 
-메시지는 헤더와 페이로드로 구성된다. 헤더의 핵심 필드는 세 개다:
+메시지는 헤더와 페이로드로 구성된다. 헤더의 핵심 필드는 세 개(type / timestamp /
+stream_id)이고, 거기에 길이 필드가 붙는다:
 
 ```text
 Message
-├─ message_type (1B)   : 이 메시지가 무엇인가 (오디오? 비디오? 커맨드?)
-├─ timestamp   (4B)    : 미디어 타임라인상의 시각 (ms)
-├─ stream_id   (4B)    : 어느 논리 스트림 소속인가
-├─ payload_length (3B) : 페이로드 크기
-└─ payload             : 실제 내용 (압축된 프레임, AMF0 커맨드, ...)
+├─ 헤더 ──┬─ message_type    (1B)  이 메시지가 무엇인가 — audio? video? command?
+│         ├─ timestamp       (4B)  미디어 타임라인상의 시각 (ms)
+│         ├─ stream_id       (4B)  어느 논리 스트림 소속인가
+│         └─ payload_length  (3B)  페이로드 크기
+│
+└─ 페이로드 ─────────────────────  실제 내용 — 압축된 프레임 · AMF0 커맨드 · …
+                                   (형식은 message_type이 결정한다)
 ```
+
+헤더는 **논리 필드의 집합**이라는 점을 기억하자. 이 필드들이 조각마다 통째로 나가는
+것이 아니라, 청크 층이 직전 청크와 겹치는 필드를 지워 가며 11 / 7 / 3 / 0바이트로
+압축해 싣는다 (Part 3 §3.1).
 
 `message_type` 값으로 메시지의 종류가 갈린다. srs_simple이 다루는 타입 전체:
 
@@ -124,21 +140,25 @@ Message
 프레임은 수백 바이트인데 **20~40ms마다 꼬박꼬박** 도착해야 한다. 메시지를 통째로 보내면:
 
 ```text
-(청크 없이 메시지를 통째로 보낼 때)
-──[        비디오 키프레임 300KB        ][a][a][a]──▶
-                                        ▲
-                       키프레임이 전송되는 동안 오디오가 굶는다
-                       → 수신 측 오디오 끊김 (지터)
+(A) 청크 없이 메시지를 통째로 보낼 때        TCP 바이트 순서 →
+
+    |<------- video keyframe 300KB ------->|[a][a][a]
+                                           ▲
+    키프레임을 다 밀어낼 때까지 오디오는 대기열에서 굶는다
+    → 20~40ms 간격이 무너지고 수신 측에서 소리가 끊긴다
 ```
 
 그래서 RTMP는 모든 메시지를 `chunk_size`(기본 128바이트, 협상으로 확대 가능) 이하의
 조각으로 쪼개고, **서로 다른 메시지의 조각을 한 TCP 스트림에서 교차(interleave)**시킨다:
 
 ```text
-(청크로 쪼개 인터리빙할 때)
-──[v1][v2][a★][v3][a★][v4][v5][a★]──▶
-   비디오 조각 사이사이에 오디오가 끼어든다
-   → 큰 메시지가 작은 메시지의 지연을 막지 못함
+(B) chunk_size 단위로 쪼개 인터리빙할 때      TCP 바이트 순서 →
+
+    [v1][v2][ a ][v3][v4][ a ][v5][v6][ a ]
+             ▲              ▲              ▲
+    비디오 조각 사이사이에 오디오 메시지가 끼어든다
+    → 큰 메시지가 작은 메시지의 지연 상한을 지배하지 못한다
+      (지연 상한 = chunk_size 하나를 밀어내는 시간)
 ```
 
 각 조각 앞에는 작은 청크 헤더가 붙어서 "이 조각이 어느 메시지 흐름의 몇 번째 조각인지"를
@@ -159,27 +179,41 @@ Message
 | 값의 예   | 2=컨트롤, 3=커맨드, 4~=미디어 (관례)   | 0=연결 수준, 1=createStream으로 만든 스트림 |
 | 결정 주체 | 보내는 쪽이 임의로 (관례를 따를 뿐)    | 서버가 createStream 응답으로 발급           |
 
-```text
-TCP 커넥션 1개
- │
- ├─ csid 2 ─── 프로토콜 컨트롤 조각들     ┐
- ├─ csid 3 ─── connect 등 커맨드 조각들   │ 전송 다중화 축
- ├─ csid 4 ─── 오디오 조각들             │ (청크를 재조립 흐름별로 분류)
- └─ csid 6 ─── 비디오 조각들             ┘
-       ▼ 재조립되면
- 각 메시지의 stream_id ── 0 (연결 수준: connect, createStream)
-                       └─ 1 (스트림 수준: publish, play, audio, video)
-                          논리 세션 축
+```mermaid
+flowchart LR
+    TCP(["TCP 커넥션 1개<br/>청크가 교차 전송되는 바이트 한 줄"])
+
+    subgraph AX1["① 전송 다중화 축 — csid (청크 헤더)"]
+        direction TB
+        C2["csid 2<br/>프로토콜 컨트롤 조각"]
+        C3["csid 3<br/>connect · createStream 조각"]
+        C4["csid 4<br/>onMetaData 조각"]
+        C5["csid 5<br/>publish · play · onStatus 조각"]
+        C6["csid 6<br/>비디오 조각"]
+        C7["csid 7<br/>오디오 조각"]
+    end
+
+    subgraph AX2["② 논리 세션 축 — 재조립 후 stream_id (메시지 헤더)"]
+        direction TB
+        S0["sid 0 — 연결 수준<br/>connect, createStream, 컨트롤 메시지"]
+        S1["sid 1 — 스트림 수준<br/>publish, play, onMetaData, audio, video"]
+    end
+
+    TCP --> C2 & C3 & C4 & C5 & C6 & C7
+    C2 & C3 --> S0
+    C4 & C5 & C6 & C7 --> S1
 ```
 
 비유하면 csid는 **트럭 번호**(어느 트럭에 실어 나눠 보냈는가)이고, sid는 **수취인**(이 화물이
 논리적으로 누구 것인가)이다. 같은 수취인의 화물이 여러 트럭에 나뉠 수 있고, 한 트럭이 여러
 수취인의 화물을 나를 수도 있다 — 두 축은 독립이다.
 
-srs_simple에는 csid 관례가 [srs_kernel_flv.hpp:39-54](../src/kernel/srs_kernel_flv.hpp#L39-L54)의
-`RTMP_CID_*` 상수로 정리되어 있다 (ProtocolControl=2, OverConnection=3, OverStream=5,
-Video=6, Audio=7). 이 구분은 Part 3(청크 재조립)과 Part 6(createStream이 sid를 발급하는
-순간)에서 다시 만난다.
+위 그림의 csid 값은 임의로 고른 게 아니라 srs_simple이 실제로 쓰는
+[srs_kernel_flv.hpp:39-54](../src/kernel/srs_kernel_flv.hpp#L39-L54)의 `RTMP_CID_*`
+상수 그대로다 (`ProtocolControl`/`OverConnection`/`OverConnection2`/`OverStream`/`Video`/`Audio`).
+다만 이건 **관례일 뿐 프로토콜이 강제하지 않는다** — 보내는 쪽이 다른 번호를 골라도 되고,
+그래서 화살표의 방향(어느 csid가 어느 sid로 재조립되는가)은 구현마다 달라질 수 있다.
+이 구분은 Part 3(청크 재조립)과 Part 6(createStream이 sid를 발급하는 순간)에서 다시 만난다.
 
 ---
 
@@ -191,32 +225,62 @@ Video=6, Audio=7). 이 구분은 Part 3(청크 재조립)과 Part 6(createStream
 
 **Publisher (OBS/ffmpeg가 송출할 때):**
 
-```text
-클라이언트                        서버
-    │ ── 핸드셰이크 (3,073+1,536 바이트 교환) ──── │   ◀ Part 2
-    │ ── connect("live") ─────────────────▶ │   ◀ Part 6
-    │ ◀─ 윈도우/대역폭/청크크기 설정 + _result ── │   ◀ Part 4, 6
-    │ ── releaseStream / FCPublish ───────▶ │   ◀ Part 6
-    │ ── createStream() ──────────────────▶ │
-    │ ◀─ _result(streamId=1) ────────────── │
-    │ ── publish("test", "live") ──────────▶ │   ◀ Part 7
-    │ ◀─ onStatus(NetStream.Publish.Start) ─ │
-    │ ── onMetaData ───────────────────────▶ │
-    │ ── audio/video 메시지 반복 ════════════▶ │   ◀ 여기부터가 "방송 중"
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as 클라이언트 (OBS / ffmpeg)
+    participant S as 서버 (srs_simple)
+
+    Note over C,S: Part 2 — 핸드셰이크
+    C->>S: C0 + C1 (1,537 바이트)
+    S->>C: S0 + S1 + S2 (3,073 바이트)
+    C->>S: C2 (1,536 바이트)
+
+    Note over C,S: Part 4, 6 — 연결 수립과 부트스트랩
+    C->>S: connect('live') tid=1
+    S->>C: WindowAckSize / SetPeerBandwidth / SetChunkSize
+    S->>C: _result(connect) tid=1
+
+    Note over C,S: Part 6, 7 — publish 협상
+    C->>S: releaseStream / FCPublish
+    C->>S: createStream() tid=4
+    S->>C: _result(streamId=1)
+    C->>S: publish('test', 'live') tid=5, sid=1
+    S->>C: onStatus(NetStream.Publish.Start)
+
+    Note over C,S: 여기부터가 ‘방송 중’ — 세션의 99%
+    C->>S: onMetaData
+    loop 방송이 끝날 때까지
+        C->>S: audio / video 메시지
+    end
 ```
 
 **Player (ffplay/VLC가 시청할 때):**
 
-```text
-클라이언트                        서버
-    │ ── 핸드셰이크 ──────────────────────── │
-    │ ── connect("live") ─────────────────▶ │
-    │ ◀─ (위와 동일한 부트스트랩) ──────────── │
-    │ ── createStream() ──────────────────▶ │
-    │ ◀─ _result(streamId=1) ────────────── │
-    │ ── play("test") ─────────────────────▶ │   ◀ Part 8
-    │ ◀─ StreamBegin + onStatus 2종 ──────── │
-    │ ◀═ onMetaData → 시퀀스 헤더 → GOP → 라이브 │   ◀ Part 8의 심장
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as 클라이언트 (ffplay / VLC)
+    participant S as 서버 (srs_simple)
+
+    Note over C,S: Part 2, 6 — publisher와 완전히 동일한 구간
+    C->>S: 핸드셰이크 (C0C1 / S0S1S2 / C2)
+    C->>S: connect('live') tid=1
+    S->>C: 윈도우/대역폭/청크크기 설정 + _result(connect)
+
+    Note over C,S: Part 8 — play 협상
+    C->>S: createStream() tid=2
+    S->>C: _result(streamId=1)
+    C->>S: play('test') tid=0, sid=1
+    S->>C: UserControl StreamBegin(1)
+    S->>C: onStatus(NetStream.Play.Reset) + onStatus(NetStream.Play.Start)
+    S->>C: |RtmpSampleAccess(true, true)
+
+    Note over C,S: Part 8의 심장 — 새 플레이어 프리필
+    S->>C: onMetaData → 시퀀스 헤더(AAC/AVC) → GOP 캐시
+    loop 연결이 끊길 때까지
+        S->>C: 라이브 audio / video 메시지
+    end
 ```
 
 두 시퀀스에서 관찰할 것 세 가지:
@@ -239,22 +303,15 @@ srs_simple에서 이 수명주기는 연결 하나를 담당하는 `SrsRtmpConn`
 
 ## 4. 시리즈 로드맵 — 각 파트는 이 그림의 어디인가
 
-위 조감도에 이후 파트를 겹쳐 놓으면 이렇다:
+위 조감도에 이후 파트를 겹쳐 놓으면 이렇다. **가로는 시간**(§3의 수명주기 순서),
+**세로는 층**(§1의 층 모델)이다 — 각 칸이 "그 층의 그 시점"을 다루는 파트다.
 
-```text
-                    ┌── Part 2: 핸드셰이크 (연결의 맨 앞, 층 모델 바깥의 서막)
-시간 ─────────────────────────────────────────────────────▶
-      handshake │ connect~createStream │ publish/play │ 미디어 반복
-                     Part 6                Part 7/8       Part 7/8
-      ──────────────────────────────────────────────────────
-층    메시지 스트림   Part 5 (AMF0: 커맨드의 직렬화 언어)
-                    Part 6~8 (커맨드의 의미와 순서)
-      청크 스트림     Part 3 (쪼개기/재조립 — RTMP의 심장)
-                    Part 4 (청크 층을 관리하는 컨트롤 메시지)
-      TCP           (다루지 않음 — 신뢰성은 TCP가 공짜로 준다)
-      ──────────────────────────────────────────────────────
-      서버 내부      Part 9 (와이어 밖: 1 publisher → N player 팬아웃)
-```
+| 층 ↓ ＼ 시간 → | ① 핸드셰이크 | ② connect ~ createStream | ③ publish / play | ④ 미디어 반복 |
+| --- | --- | --- | --- | --- |
+| **메시지 스트림** (논리 단위) | — | **Part 5** AMF0 = 커맨드의 직렬화 언어 · **Part 6** 접속과 클라이언트 식별 | **Part 7** 송출 시작 · **Part 8** 시청 시작 | **Part 7 / 8** 미디어 메시지 릴레이 |
+| **청크 스트림** (전송 단위) | — | **Part 3** 쪼개기·재조립 = RTMP의 심장 · **Part 4** 청크 층을 관리하는 컨트롤 메시지 | 동일 (Part 3·4) | 동일 (Part 3·4) — 세션 바이트의 99%가 여기 |
+| **TCP** | **Part 2** 고정 바이트 교환 (층 모델 바깥의 서막) | 다루지 않음 — 신뢰성은 TCP가 공짜로 준다 | 〃 | 〃 |
+| **서버 내부** (와이어 밖) | — | — | **Part 9** 1 publisher → N player 팬아웃 | **Part 9** GOP·메타 캐시, 무복사 전달 |
 
 - **Part 2 (핸드셰이크)**: 층 모델이 시작되기 전, 연결 벽두의 고정 바이트 교환. 왜 3,073바이트인지,
   Flash 시대의 암호 검증이 왜 흔적기관이 됐는지.

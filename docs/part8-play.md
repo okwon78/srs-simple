@@ -29,20 +29,35 @@
 후반부에서 세 캐시 — onMetaData, 시퀀스 헤더, GOP — 가 이 문제를 푸는 방식을 따라간다.
 CLAUDE.md §2.5의 player 다이어그램에서 이번 파트가 확대하는 구간은 여기다:
 
-```text
-client (ffplay/VLC)                   server
-  ── connect(app)         tid=1 ──▶      ┐
-  ◀─ WinAckSize/SetPeerBW/SetChunkSize   │ Part 6과 동일한 부트스트랩
-  ◀─ _result(connect) ────────────       ┘
-  ── createStream()       tid=2 ──▶      ┐ identify (§1)
-  ◀─ _result(streamId=1) ─────────       │
-  ── play(name)           tid=0 ──▶      ┘  sid=1
-  ◀─ UserControl StreamBegin(1) ──    ┐
-  ◀─ onStatus(NetStream.Play.Reset)   │
-  ◀─ onStatus(NetStream.Play.Start)   │ start_play — 응답 5연타 (§2)
-  ◀─ |RtmpSampleAccess(true,true) ─   │
-  ◀─ onMetaData → 시퀀스 헤더 → GOP ─  ┘  ← 프리필 (§4~6)
-  ◀─ 라이브 audio/video ───────────      ← 송신 루프 (§7)
+```mermaid
+sequenceDiagram
+    participant C as 클라이언트 (ffplay / VLC)
+    participant S as 서버
+
+    rect rgba(130, 170, 255, 0.12)
+        Note over C,S: Part 6과 완전히 동일한 구간
+        C->>S: connect(app) — tid=1
+        S->>C: WindowAckSize / SetPeerBandwidth / SetChunkSize
+        S->>C: _result(connect)
+    end
+    C->>S: createStream() — tid=2
+    S->>C: _result(streamId=1)
+    Note right of S: identify_client (§1)
+    C->>S: play(name) — tid=0, sid=1
+    rect rgba(150, 200, 140, 0.14)
+        Note over C,S: start_play — 일방 통보 4연발 (§2)
+        S->>C: UserControl StreamBegin(1) — 메시지는 stream_id=0
+        S->>C: onStatus(NetStream.Play.Reset) — sid=1
+        S->>C: onStatus(NetStream.Play.Start) — sid=1
+        S->>C: |RtmpSampleAccess(true, true) — sid=1
+    end
+    rect rgba(255, 190, 120, 0.16)
+        Note over C,S: 프리필 — 캐시 재생분, 이 파트의 심장 (§4~6)
+        S->>C: onMetaData → AAC sh → AVC sh → GOP 캐시
+    end
+    loop 연결이 끊길 때까지
+        S->>C: 라이브 audio / video (§7)
+    end
 ```
 
 ---
@@ -58,14 +73,14 @@ createStream을 만나면
 [`identify_create_stream_client`](../src/protocol/srs_protocol_rtmp_stack.cpp#L2031)로
 들어가 **`_result(streamId=1)`를 먼저 보내 놓고, 다음 커맨드를 계속 기다린다**:
 
-```text
-identify_client:
-  createStream? ──▶ identify_create_stream_client(depth=3):
-                      _result(streamId=1) 송신
-                      다음 커맨드 대기...
-                        ├─ play?         ──▶ type=Play, stream_name 확정   ← 이 경로
-                        ├─ publish?      ──▶ type=FlashPublish
-                        └─ createStream? ──▶ 재귀 (depth-1)
+```mermaid
+flowchart TB
+    A["identify_client — createStream 수신"] --> B["<b>identify_create_stream_client</b> (depth=3)<br/>_result(streamId=1)을 <b>먼저</b> 송신<br/>— 응답하지 않으면 클라이언트는 다음 커맨드를 보내지 않는다"]
+    B --> C{"다음 커맨드를 기다린다"}
+    C -- "play" --> D["type = <b>Play</b><br/>stream_name · duration 확정 ← 이 글의 경로"]
+    C -- "publish" --> E["type = FlashPublish (Part 7)"]
+    C -- "createStream 또" --> F["재귀 (depth-1)<br/>0이 되면 ERROR_RTMP_CREATE_STREAM_DEPTH"]
+    F --> C
 ```
 
 재귀 깊이 3의 가드는 createStream을 여러 번 보내는 클라이언트(일부 Flash 앱)를
@@ -79,13 +94,14 @@ play 커맨드의 페이로드를 바이트로 보면 (sid=1, csid 5로 온다 �
 "스트림에 대한 대화" 채널):
 
 ```text
-02 00 04 70 6C 61 79                            string(4)  "play"
-00 00 00 00 00 00 00 00 00                      number 0.0            ← tid = 0 !
-05                                              null                  ← command object
-02 00 0A 6C 69 76 65 73 74 72 65 61 6D          string(10) "livestream" ← 스트림 이름
-(이하 선택) 00 C0 00 ...                         number -2.0           ← start
-           00 BF F0 ...                         number -1.0           ← duration
-           01 01                                boolean true          ← reset
+필수 ┌ 02 00 04 70 6C 61 79                       string(4)  "play"
+     │ 00 00 00 00 00 00 00 00 00                 number 0.0             ← tid = 0 !
+     │ 05                                         null                   ← command object
+     └ 02 00 0A 6C 69 76 65 73 74 72 65 61 6D     string(10) "livestream" ← 스트림 이름
+선택 ┌ 00 C0 00 ...                               number -2.0            ← start
+     │ 00 BF F0 ...                               number -1.0            ← duration
+     └ 01 01                                      boolean true           ← reset
+       ▲ 어디까지 보내는지는 클라이언트마다 다르다 — 파서는 남은 바이트가 있을 때만 읽는다
 ```
 
 **tid가 0이다.** connect(tid=1)/createStream(tid=2)과 달리 play는 `_result`를 받지
@@ -215,6 +231,16 @@ if (active) {
 }
 ```
 
+프리필이 끝난 순간 이 플레이어의 재생 큐는 이런 모습이다 (왼쪽이 먼저 나간다):
+
+```text
+┌────────────┬────────┬────────┬───────────┬─────┬─────┬──────────────
+│ onMetaData │ AAC sh │ AVC sh │ key frame │  P  │  P  │ … 라이브 …
+└────────────┴────────┴────────┴───────────┴─────┴─────┴──────────────
+      ①          ②        ③         ④  마지막 키프레임부터 현재까지
+  └──── MetaCache::dumps (§4) ────┘  └── GopCache::dump (§5) ──┘  └ 팬아웃 (§7)
+```
+
 주입 순서는 고정이고, 각 순서에 이유가 있다:
 
 - **onMetaData가 맨 앞**: 스트림의 명함이 미디어보다 먼저 —
@@ -256,7 +282,19 @@ gop_cache.push_back(msg->copy());
 ```
 
 키프레임에서 clear하고 다시 쌓는다 — 이 단순한 규칙의 결과로 캐시는 **언제나
-"마지막 키프레임부터 현재까지"** 구간을 들고 있다. 새 플레이어가 어느 시점에
+"마지막 키프레임부터 현재까지"** 구간을 들고 있다:
+
+```text
+publisher가 미는 순서 →
+   K1  P  P  P     K2  P  P  P  P     K3  P …
+                   ▲ clear() 후 K2부터 다시 쌓는다
+
+시점별 캐시 내용                        그 시점에 입장한 플레이어가 받는 것
+  t1  [K1 P P]                          K1부터 — 즉시 디코드 가능
+  t2  [K1 P P P]                        (K1 GOP가 계속 자란다)
+  t3  [K2]                              K2 도착 직후 — K1 GOP는 버려졌다
+  t4  [K2 P P P P]                      K2부터
+``` 새 플레이어가 어느 시점에
 들어오든, 캐시 재생분의 첫 프레임은 키프레임이고 마지막 프레임은 방금 전이다. §3-3
 (디코드 가능)과 "즉시 재생"(다음 키프레임을 기다릴 필요 없음)이 동시에 풀린다.
 대가는 지연이다 — 새 플레이어는 최대 GOP 길이만큼 과거에서 재생을 시작한다.

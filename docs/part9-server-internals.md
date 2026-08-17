@@ -41,15 +41,21 @@ Part 7의 publish 루프와 Part 8의 play 루프는 서로를 모른다. publis
 `source->on_video(msg)`를 부르고 끝, player의 스레드는 `consumer->dump_packets`로
 꺼내 갈 뿐이다. 둘을 잇는 것이 스트림 허브다:
 
-```text
-                         SrsLiveSourceManager (_srs_sources)
-                          "vhost/app/stream" → source 맵
-                                     │ fetch_or_create
-                                     ▼
- publisher ──on_audio/on_video──▶ SrsLiveSource ──enqueue──▶ SrsLiveConsumer ──▶ player A
- (OBS, 스레드 1개)                │  ├ SrsMetaCache          (큐+지터, 연결마다) 
-                                  │  └ SrsGopCache      └──▶ SrsLiveConsumer ──▶ player B
-                                  └ consumers[]                      ⋮       ──▶ player N
+```mermaid
+flowchart LR
+    SM["<b>SrsLiveSourceManager</b> — _srs_sources<br/>'vhost/app/stream' → source 맵"] -. "fetch_or_create" .-> S
+    P["publisher (OBS)<br/>스레드 1개"] -- "on_audio / on_video" --> S
+
+    subgraph S["<b>SrsLiveSource</b> — 스트림당 1개"]
+        direction TB
+        MC["SrsMetaCache<br/>onMetaData · AAC/AVC 시퀀스 헤더"]
+        GC["SrsGopCache<br/>[마지막 키프레임 .. 현재]"]
+        CO["consumers[]"]
+    end
+
+    CO -- "enqueue<br/>copy() = refcount+1" --> A["SrsLiveConsumer A<br/>개인 큐 + 개인 지터"] --> PA["player A 스레드"]
+    CO --> B["SrsLiveConsumer B"] --> PB["player B 스레드"]
+    CO --> N["SrsLiveConsumer N"] --> PN["player N 스레드"]
 ```
 
 스트림의 주소는 [`SrsRequest::get_stream_url`](../src/protocol/srs_protocol_rtmp_stack.cpp#L1522)이
@@ -97,13 +103,22 @@ publisher 스레드가 받은 `SrsCommonMessage`는 팬아웃 직전
 해제 방지). 이후 [`copy()`](../src/kernel/srs_kernel_flv.cpp#L286)는 페이로드를
 건드리지 않고 `shared_count`만 올린다:
 
-```text
-publisher 스레드                                  consumer 큐 × N
-SrsCommonMessage ──create()──▶ SrsSharedPtrMessage ──copy()×N──▶ 사본 N개
- (payload 단독 소유,             │ timestamp, stream_id            │ timestamp, stream_id
-  이관 후 NULL)                  └─ptr─▶ SrsSharedPtrPayload ◀─ptr─┘  (사본마다 개별!)
-                                         { payload*, size,
-                                           shared_count }   ← 1MB 키프레임은 여기 한 벌뿐
+```mermaid
+flowchart LR
+    CM["<b>SrsCommonMessage</b> — 수신 측<br/>payload 단독 소유<br/>이관 후 payload = NULL"] -- "create()<br/>복사가 아니라 <b>이관</b>" --> SP["<b>SrsSharedPtrMessage</b><br/>timestamp · stream_id"]
+    SP -- "copy() × N — refcount+1" --> S1["사본 1<br/>timestamp · stream_id"]
+    SP --> S2["사본 2<br/>timestamp · stream_id"]
+    SP --> SN["사본 N<br/>timestamp · stream_id"]
+
+    SP -- ptr --> PL
+    S1 -- ptr --> PL
+    S2 -- ptr --> PL
+    SN -- ptr --> PL
+    PL["<b>SrsSharedPtrPayload</b> — 힙에 한 벌<br/>payload* · size · shared_count<br/>1MB 키프레임도 여기 하나뿐"]
+
+    S1 --> Q1["consumer A 큐"]
+    S2 --> Q2["consumer B 큐"]
+    SN --> QN["consumer N 큐"]
 ```
 
 1MB 키프레임을 1,000명에게 보내도 힙에 있는 페이로드는 한 벌이고, 복사되는 것은
@@ -198,6 +213,18 @@ utest [RtmpJitterCorrect](../utest/srs_utest_source.cpp#L56)의 시퀀스로 동
 | 9000 | −1000 | 역행(<−250) → 10ms 클램프 | 60 |
 | 12345 (메타데이터) | — | 비 A/V는 무조건 0 | 0 |
 
+한 줄로 겹쳐 보면 이 알고리즘이 하는 일이 보인다:
+
+```text
+입력 ts    0 ──▶ 40 ──────────────▶ 10000 ──────────▶ 9000
+                                     ▲ 점프 +9960      ▲ 역행 -1000
+                                     (재-publish · GOP 프리필 · 시계 역행)
+
+출력 ts    0 ──▶ 40 ──▶ 50 ──▶ 60
+                        ▲ 클램프 10ms  ▲ 클램프 10ms
+                        └─ 위생 처리된 델타만 0에서부터 누적한다
+```
+
 입력이 10000으로 튀든 9000으로 돌아가든 출력은 40 → 50 → 60으로 담담하게 흐른다.
 GOP 프리필(과거)도, 재-publish(0으로 점프)도, 이 관점에서는 그냥 "비정상 델타
 한 번"일 뿐이다 — 클램프된 10ms를 물고 타임라인은 계속 전진한다. 클램프 값이
@@ -234,9 +261,13 @@ FULL 고정이지만 원본은 vhost 설정으로 고른다.
 불가능한 쓰레기다. 그래서 shrink의 정책은 과격하다:
 
 ```text
-shrink 전:  [vsh][ash][key][P][P][P][key][P][P] ...30초치...   ← 30초 뒤처진 플레이어
-shrink 후:  [vsh][ash]                                          ← 타임스탬프는 큐 끝 시각으로
-                └─ 다음 enqueue부터는 라이브 — 뒤처짐이 0으로 리셋
+shrink 전   [vsh][ash][key][P][P][P][key][P][P] … 30초치 …    ← 30초 뒤처진 플레이어
+                       └────────── 전부 버린다 ──────────┘
+                       (부분 드롭 X — GOP 중간을 자르면 남은 P/B는 디코드 불가 쓰레기)
+
+shrink 후   [vsh][ash]                                        ← 최신 시퀀스 헤더만 재주입
+              └─ 타임스탬프는 둘 다 "큐 끝 시각"으로 맞춘다
+                 다음 enqueue부터 라이브 — 뒤처짐이 0으로 리셋된다
 ```
 
 **전체를 비우고, 큐를 훑으며 챙겨 둔 최신 시퀀스 헤더만 큐 끝 시각으로 재주입한다.**
@@ -287,10 +318,19 @@ srs_simple은 이를 pthread(1 연결 = 1 스레드)로 바꿨다. 하지만 **�
 **둘째, 락이 생겼다.** ST에서는 공짜였던 공유 상태 접근이 pthread에서는 데이터
 레이스다. `SrsLiveSource`는 내부 mutex로 consumers/캐시/`can_publish_`를 보호하고,
 `SrsLiveConsumer`는 mutex + 조건 변수로 개인 큐를 보호한다. 규칙은 하나 — **락
-순서는 항상 source → consumer.** §3의 팬아웃이 소스 락을 잡은 채 consumer 락을
-잡는 `enqueue`를 부르는 것이 순방향의 예다. 역방향처럼 보이는
-`~SrsLiveConsumer` → `on_consumer_destroy`(소스 락)는 consumer 락을 잡지 않은 채
-호출되므로 교착이 없다.
+순서는 항상 source → consumer**다:
+
+```mermaid
+flowchart TB
+    P["publisher 스레드<br/>on_video_imp"] -- "① source mutex" --> S["<b>SrsLiveSource</b><br/>consumers · MetaCache · GopCache · can_publish_"]
+    S -- "② consumer mutex — 순방향 ✔" --> C["<b>SrsLiveConsumer</b><br/>개인 큐 + 조건 변수"]
+    PL["player 스레드<br/>do_playing → wait / dump_packets"] -- "consumer mutex 하나만 ✔" --> C
+    D["~SrsLiveConsumer → on_consumer_destroy"] -- "consumer 락을 잡지 <b>않은</b> 채<br/>source 락을 잡는다 → 교착 없음 ✔" --> S
+```
+
+§3의 팬아웃이 소스 락을 잡은 채 consumer 락을 잡는 `enqueue`를 부르는 것이 순방향의
+예다. 역방향처럼 보이는 `~SrsLiveConsumer` → `on_consumer_destroy`(소스 락)는
+consumer 락을 잡지 않은 채 호출되므로 교착이 없다.
 
 락이 생기면 원본에서는 원자적이던 시퀀스가 깨질 수 있다. 대표가 publish 점유다:
 [`acquire_publish`](../src/app/srs_app_rtmp_conn.cpp#L418)는 `can_publish()`를

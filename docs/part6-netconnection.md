@@ -32,20 +32,30 @@ RTMP 커맨드는 두 층으로 나뉜다: 연결 하나에 대한 커맨드(con
 
 CLAUDE.md §2.5의 시퀀스 다이어그램에서 이번 파트가 확대하는 구간은 여기다:
 
-```text
-client                                server
-  ── connect(app)          tid=1 ──▶
-  ◀─ WindowAckSize ──────────────────  ┐
-  ◀─ SetPeerBandwidth ───────────────  │ 부트스트랩 (§2.2)
-  ◀─ SetChunkSize ───────────────────  │
-  ◀─ _result(connect)      tid=1 ────  ┘
-  ── releaseStream(name)   tid=2 ──▶   ┐
-  ◀─ _result ────────────────────────  │ 여기서부터 서버는
-  ── FCPublish(name)       tid=3 ──▶   │ identify_client 안 (§5)
-  ◀─ _result ────────────────────────  │
-  ── createStream()        tid=4 ──▶   │
-  ◀─ _result(streamId=1) ────────────  ┘
-  ── publish / play ...          ──▶   → Part 7 / Part 8
+```mermaid
+sequenceDiagram
+    participant C as 클라이언트
+    participant S as 서버 (srs_simple)
+
+    C->>S: connect(app) — tid=1
+    rect rgba(130, 170, 255, 0.12)
+        Note over C,S: 부트스트랩 (§2.2) — 순서가 곧 규칙
+        S->>C: WindowAckSize
+        S->>C: SetPeerBandwidth
+        S->>C: SetChunkSize
+        S->>C: _result(connect) — tid=1
+    end
+    rect rgba(150, 200, 140, 0.14)
+        Note over C,S: identify_client 진입 (§5) — 커맨드 순서로 의도를 판별한다
+        C->>S: releaseStream(name) — tid=2
+        S->>C: _result → 이 시점에 FMLEPublish로 확정
+        C->>S: FCPublish(name) — tid=3
+        S->>C: _result
+        C->>S: createStream() — tid=4
+        S->>C: _result(streamId=1) — §3
+    end
+    C->>S: publish / play …
+    Note over C,S: → Part 7 (publish) / Part 8 (play)
 ```
 
 ---
@@ -55,11 +65,17 @@ client                                server
 type 20(AMF0 command) 메시지의 페이로드는 예외 없이 이 꼴이다:
 
 ```text
-┌────────────────────┬──────────────────────┬─────────────────┬──────────────┐
-│ 커맨드 이름 (string) │ transaction_id (number)│ command object  │ args ...     │
-│ "connect", "play"...│ 요청-응답 매칭 번호      │ Object 또는 Null │ 커맨드별 추가 │
-└────────────────────┴──────────────────────┴─────────────────┴──────────────┘
+┌──────────────────┬──────────────────┬─────────────────┬──────────────┐
+│  command name    │  transaction_id  │ command object  │   args ...   │
+│  string (0x02)   │  number (0x00)   │ object or null  │ 0..N values  │
+└──────────────────┴──────────────────┴─────────────────┴──────────────┘
 ```
+
+- **command name**: `"connect"`, `"createStream"`, `"publish"`, `"_result"` …
+  — 이 문자열이 디코드할 패킷 클래스를 결정한다 (Part 5 §1)
+- **transaction_id**: 요청-응답을 묶는 번호. 응답이 필요 없는 커맨드는 0
+- **command object**: 커맨드의 인자 꾸러미. 인자가 없으면 Null(0x05)
+- **args**: 커맨드별 추가 값. publish의 `"live"`, play의 start/duration/reset 등
 
 요청에는 이름이 있지만, 응답의 이름은 `_result`(성공) 또는 `_error`(실패)뿐이다.
 그럼 `_result`가 도착했을 때 이것이 **무슨 요청에 대한** 응답인지 어떻게 아는가?
@@ -175,10 +191,11 @@ connect를 받은 서버가 응답하는 코드는
 송신 순서가 고정돼 있다:
 
 ```text
-① WindowAckSize(2500000)     ← Part 4의 흐름 제어 파라미터
-② SetPeerBandwidth(2500000)  ← 관례상 1회
-③ SetChunkSize(60000)        ← 반드시 ④보다 먼저!
-④ _result(connect)           ← NetConnection.Connect.Success
+① WindowAckSize(2500000)     ─┬─ 이 둘은 서로 순서를 바꿔도 된다
+② SetPeerBandwidth(2500000)  ─┘   (Part 4의 흐름 제어 파라미터 · 관례상 1회)
+③ SetChunkSize(60000)        ─── 반드시 ④보다 먼저! (128B 넘는 응답 전에)
+④ _result(connect)           ─── 반드시 마지막 — NetConnection.Connect.Success
+                                 클라이언트는 이것을 받고서야 다음 커맨드를 보낸다
 ```
 
 ③이 ④보다 먼저인 이유는 Part 4에서 다뤘던 타이밍 규칙의 재방문이다: connect의
@@ -291,23 +308,25 @@ connect까지는 publisher와 player의 대화가 똑같다. RTMP에는 "나는 
 [`SrsRtmpServer::identify_client`](../src/protocol/srs_protocol_rtmp_stack.cpp#L1762)
 (원본 :2440)다.
 
-```text
-identify_client (루프)
-  │  컨트롤 메시지(ack/chunksize/…)는 skip, 커맨드가 아니면 skip
-  │
-  ├─ releaseStream 수신 ──▶ type = FMLEPublish, _result 응답 후 반환
-  │                          (FCPublish/createStream/publish는 Part 7의
-  │                           start_fmle_publish가 마저 처리)
-  │
-  ├─ createStream 수신 ──▶ identify_create_stream_client:
-  │                          _result(sid=1) 응답 후 다음 커맨드 대기 (재귀, depth 3)
-  │                            ├─ play 수신    ──▶ type = Play
-  │                            ├─ publish 수신 ──▶ type = FlashPublish
-  │                            └─ createStream ──▶ 재귀 (depth-1)
-  │
-  ├─ play 수신 ──────────▶ type = Play (createStream 없이 — 관대 처리)
-  │
-  └─ 그 외 커맨드 ────────▶ 무시하고 루프 계속
+```mermaid
+flowchart TB
+    L["<b>identify_client</b> 루프<br/>메시지를 하나씩 받는다"] --> K{"무엇이 왔나?"}
+
+    K -- "컨트롤 메시지<br/>(ack · SetChunkSize · UserControl)" --> SK["<b>drop</b> 후 루프 계속<br/>반영은 on_recv_message가 이미 끝냈다"]
+    K -- "커맨드가 아닌 메시지" --> SK
+    K -- "모르는 커맨드<br/>(getStreamLength · _checkbw)" --> SK
+    SK --> L
+
+    K -- "releaseStream" --> FM["type = <b>FMLEPublish</b><br/>_result 응답 후 반환<br/>나머지 시퀀스는 Part 7 start_fmle_publish"]
+
+    K -- "createStream" --> CS["<b>identify_create_stream_client</b><br/>_result(sid=1)을 먼저 응답하고 (§3)<br/>다음 커맨드를 계속 기다린다"]
+    CS --> CK{"다음 커맨드"}
+    CK -- "play" --> PL["type = <b>Play</b><br/>stream_name · duration 확정"]
+    CK -- "publish" --> FP["type = <b>FlashPublish</b>"]
+    CK -- "createStream 또" --> RC["재귀 — depth 3까지 허용<br/>초과 시 ERROR_RTMP_CREATE_STREAM_DEPTH"]
+    RC --> CK
+
+    K -- "play — createStream 없이 (관대 처리)" --> PL
 ```
 
 루프 선두의 skip 두 줄이 실전의 핵심이다. 이 시점의 클라이언트는 커맨드만 보내는 게

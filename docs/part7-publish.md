@@ -27,21 +27,35 @@ onStatus(NetStream.Publish.Start), 그리고 허가가 떨어진 뒤 쏟아지�
 
 CLAUDE.md §2.5의 publisher 다이어그램에서 이번 파트가 확대하는 구간은 여기다:
 
-```text
-client (OBS/ffmpeg)                   server
-  ── releaseStream(name)  tid=2 ──▶
-  ◀─ _result ──────────────────────    ← 여기까지 Part 6 (identify)
-  ── FCPublish(name)      tid=3 ──▶   ┐
-  ◀─ _result ──────────────────────   │
-  ── createStream()       tid=4 ──▶   │ start_fmle_publish (§1)
-  ◀─ _result(streamId=1) ─────────    │
-  ── publish(name,"live") tid=5 ──▶   │  sid=1, csid=5
-  ◀─ onFCPublish ─────────────────    ┘
-  ◀─ onStatus(NetStream.Publish.Start)   ← start_publishing (§3) — 인가 후!
-  ── @setDataFrame/onMetaData ────▶   type 18  ┐
-  ── audio ───────────────────────▶   type 8   │ 미디어 (§4~5)
-  ── video ───────────────────────▶   type 9   │ …반복…
-  ── FCUnpublish ─────────────────▶   → 재-publish 루프 (§6)
+```mermaid
+sequenceDiagram
+    participant C as 클라이언트 (OBS / ffmpeg)
+    participant S as 서버
+
+    C->>S: releaseStream(name) — tid=2
+    S->>C: _result
+    Note over C,S: ↑ 여기까지 Part 6 — identify_client
+    rect rgba(130, 170, 255, 0.12)
+        Note over C,S: start_fmle_publish (§1) — 문답 세 번, 에코 세 번
+        C->>S: FCPublish(name) — tid=3
+        S->>C: _result
+        C->>S: createStream() — tid=4
+        S->>C: _result(streamId=1)
+        C->>S: publish(name, "live") — tid=5, sid=1, csid=5
+        S->>C: onFCPublish
+    end
+    S->>C: onStatus(NetStream.Publish.Start)
+    Note right of S: start_publishing (§3)<br/>인가를 통과한 <b>후에만</b> 보낸다
+    rect rgba(150, 200, 140, 0.14)
+        Note over C,S: 여기부터 진짜 화물 (§4~5)
+        C->>S: @setDataFrame / onMetaData — type 18
+        loop 방송이 끝날 때까지
+            C->>S: audio — type 8
+            C->>S: video — type 9
+        end
+    end
+    C->>S: FCUnpublish
+    Note over C,S: 연결은 끊지 않는다 → 재-publish 루프 (§6)
 ```
 
 ---
@@ -138,15 +152,19 @@ publish부터 csid가 5로 옮겨간다. Part 1의 구분을 다시 쓰면: **�
 ([encode_packet](../src/protocol/srs_protocol_rtmp_stack.cpp#L2968)):
 
 ```text
-02 00 08 6F 6E 53 74 61 74 75 73                string(8) "onStatus"
-00 00 00 00 00 00 00 00 00                      number 0.0            ← tid (항상 0)
-05                                              null                  ← args
-03                                              object ─┐
-  00 05 6C 65 76 65 6C          02 00 06 73 74 61 74 75 73        level: "status"
-  00 04 63 6F 64 65             02 00 17 4E 65 74 53 74 72 65 ...  code: "NetStream.Publish.Start"
-  00 0B 64 65 73 63 72 69 ...   02 00 1A 53 74 61 72 74 65 64 ...  description: "Started..."
-  00 08 63 6C 69 65 6E 74 69 64 02 00 08 41 53 41 49 43 69 73 73   clientid: "ASAICiss"
-  00 00 09                                              ─┘ object end
+02 00 08 6F 6E 53 74 61 74 75 73             string(8)  "onStatus"
+00 00 00 00 00 00 00 00 00                   number 0.0    ← tid (응답이 아니므로 항상 0)
+05                                           null          ← args
+03                                           object 시작
+   00 05 6C 65 76 65 6C                        key   "level"          (마커 없는 utf8!)
+   02 00 06 73 74 61 74 75 73                    value string "status"
+   00 04 63 6F 64 65                           key   "code"
+   02 00 17 4E 65 74 53 74 72 65 ...             value string "NetStream.Publish.Start"  ★
+   00 0B 64 65 73 63 72 69 70 ...              key   "description"
+   02 00 1A 53 74 61 72 74 65 64 ...             value string "Started publishing stream."
+   00 08 63 6C 69 65 6E 74 69 64               key   "clientid"
+   02 00 08 41 53 41 49 43 69 73 73              value string "ASAICiss"
+00 00 09                                     object end
 ```
 
 level/code/description 3종 세트는 Part 6의 `NetConnection.Connect.Success`에서 이미
@@ -162,13 +180,12 @@ Unpublish.Success(§6), 그리고 Part 8에서 볼 Play.Reset/Play.Start.
 [`SrsRtmpConn::publishing`](../src/app/srs_app_rtmp_conn.cpp#L399)
 (원본 `app/srs_app_rtmp_conn.cpp:925`)의 순서가 규칙이다:
 
-```text
-publishing:
-  ① acquire_publish(source)      ← 스트림 점유 시도 (인가)
-  ② 성공 시에만 do_publishing:
-       start_publishing(sid)     ← 여기서야 onStatus(NetStream.Publish.Start)
-       수신 루프...
-  ③ release_publish(source)      ← ①이 성공했던 경우에만
+```mermaid
+flowchart TB
+    A["SrsRtmpConn::publishing"] --> B{"① acquire_publish(source)<br/>스트림 이름 점유 시도 = 인가"}
+    B -- "실패 — 이미 다른 publisher가 점유 중<br/>ERROR_SYSTEM_STREAM_BUSY" --> X["거절.<br/>onStatus를 <b>보내지 않은 채</b> 종료<br/>(보냈다면 OBS가 재연결 루프에 빠진다)"]
+    B -- "성공" --> C["② do_publishing<br/><b>start_publishing(sid)</b> → onStatus(NetStream.Publish.Start) ★<br/>그 다음 수신 루프"]
+    C --> D["③ release_publish(source)<br/>①이 성공했던 경우에만"]
 ```
 
 [`acquire_publish`](../src/app/srs_app_rtmp_conn.cpp#L418)는 "이 스트림 이름을
@@ -248,15 +265,18 @@ type 9(video)이고, 그 페이로드 형식은 RTMP 스펙이 아니라 **FLV �
 ### 5.1 video 첫 바이트: frame_type | codec_id
 
 ```text
-video (type 9) 페이로드:
-┌───────────────┬───────────────┬────────────────┬─────────────────┬─────────
-│ frame_type(4b)│ codec_id(4b)  │ AVCPacketType  │ composition time│ 데이터...
-│ 1=keyframe    │ 7=AVC(H.264)  │ (1B) 0=시퀀스   │ (3B)            │
-│ 2=inter frame │               │      헤더,1=NALU│                 │
-└───────────────┴───────────────┴────────────────┴─────────────────┴─────────
-      └── 첫 바이트 ──┘
+video (type 9) 페이로드 = FLV VIDEODATA
+ |<--- 1st byte --->|
+┌──────────┬─────────┬────────────────┬───────────────────┬──────────
+│frame_type│codec_id │ AVCPacketType  │ composition time  │ data ...
+│  4 bit   │  4 bit  │      1B        │        3B         │
+└──────────┴─────────┴────────────────┴───────────────────┴──────────
+  1=keyframe  7=AVC     0=시퀀스 헤더
+  2=inter     (H.264)   1=NALU
 
-0x17 = 0001 0111 → keyframe + AVC     0x27 = 0010 0111 → inter frame + AVC
+첫 바이트 조합
+  0x17 = 0001 0111 = keyframe    + AVC
+  0x27 = 0010 0111 = inter frame + AVC
 ```
 
 첫 바이트 뒤의 **AVCPacketType**이 두 종류의 화물을 가른다:
@@ -276,15 +296,17 @@ video (type 9) 페이로드:
 ### 5.2 audio 첫 바이트: format | rate | size | channel
 
 ```text
-audio (type 8) 페이로드:
-┌──────────────┬──────────┬──────────┬────────────┬────────────────┬─────────
-│ SoundFormat  │ rate(2b) │ size(1b) │ channel(1b)│ AACPacketType  │ 데이터...
-│ (4b) 10=AAC  │ 3=44kHz  │ 1=16bit  │ 1=stereo   │ (1B) 0=시퀀스   │
-│              │          │          │            │      헤더,1=raw │
-└──────────────┴──────────┴──────────┴────────────┴────────────────┴─────────
-      └────────────── 첫 바이트 ──────────────┘
+audio (type 8) 페이로드 = FLV AUDIODATA
+ |<-------------- 1st byte -------------->|
+┌────────────┬──────────┬──────────┬───────┬────────────────┬──────────
+│SoundFormat │   rate   │   size   │ chan  │ AACPacketType  │ data ...
+│   4 bit    │  2 bit   │  1 bit   │ 1 bit │      1B        │
+└────────────┴──────────┴──────────┴───────┴────────────────┴──────────
+   10=AAC       3=44kHz    1=16bit   1=st     0=시퀀스 헤더 (AudioSpecificConfig)
+                                              1=raw AAC frame
 
-0xAF = 1010 1111 → AAC + 44.1kHz + 16bit + stereo
+  0xAF = 1010 1111 = AAC + 44.1kHz + 16bit + stereo
+  0xAF 0x00 → AAC 시퀀스 헤더        0xAF 0x01 → raw AAC frame
 ```
 
 AAC의 경우 rate/size/channel 비트는 사실상 장식이다 — 진짜 파라미터는
@@ -333,16 +355,23 @@ gop_cache->cache(msg);
 → [`handle_publish_message`](../src/app/srs_app_rtmp_conn.cpp#L486)로 메시지를
 분류한다:
 
-```text
-handle_publish_message:
-  ├─ AMF0 command?
-  │    ├─ FCUnpublish (SrsFMLEStartPacket) ──▶ fmle_unpublish 응답 3종 후
-  │    │                                        ERROR_CONTROL_REPUBLISH 반환
-  │    └─ 그 외 커맨드 ──▶ 로그 찍고 무시
-  └─ 미디어 (process_publish_message):
-       ├─ audio(8)  ──▶ source->on_audio(msg)    ← §5
-       ├─ video(9)  ──▶ source->on_video(msg)
-       └─ data(18)  ──▶ decode → onMetaData면 source->on_meta_data  ← §4
+```mermaid
+flowchart TB
+    R["do_publishing 루프 — recv_message"] --> H{"handle_publish_message<br/>메시지 type 은?"}
+
+    H -- "AMF0 command (type 20)" --> C{"어느 커맨드?"}
+    C -- "FCUnpublish<br/>(SrsFMLEStartPacket)" --> U["fmle_unpublish 응답 3종 →<br/><b>ERROR_CONTROL_REPUBLISH</b> 반환 (§6)"]
+    C -- "그 외" --> D["로그만 찍고 무시"]
+
+    H -- "미디어 · 데이터" --> P{"process_publish_message"}
+    P -- "audio (8)" --> A["source->on_audio(msg) — §5"]
+    P -- "video (9)" --> V["source->on_video(msg) — §5"]
+    P -- "data (18)" --> M["decode → onMetaData면<br/>source->on_meta_data(msg) — §4"]
+
+    D --> R
+    A --> R
+    V --> R
+    M --> R
 ```
 
 눈여겨볼 것은 **종료가 아니라 순환**이라는 점이다. publisher가 정상 종료하면
@@ -356,12 +385,13 @@ onStatus(NetStream.Unpublish.Success) — 을 보낸 뒤, 연결을 끊는 대�
 알아보고, 타임아웃만 넉넉히 늘린 채 `stream_service_cycle`로 — 즉 Part 6의
 `identify_client`로 — 되돌아간다.
 
-```text
-service_cycle
-  └─ while(true):
-       stream_service_cycle          ← identify → publish/play
-         └─ ERROR_CONTROL_REPUBLISH? ─▶ 로그 "retry for republish" 후 continue
-            그 외 에러? ─▶ return (연결 종료)
+```mermaid
+flowchart TB
+    S["service_cycle — 부트스트랩 응답까지 끝낸 뒤"] --> W{"while (true)"}
+    W --> T["stream_service_cycle<br/>identify_client → publish / play"]
+    T -- "<b>ERROR_CONTROL_REPUBLISH</b>" --> R["로그 'retry for republish'<br/>타임아웃만 넉넉히 늘리고 continue"]
+    R --> W
+    T -- "그 외 에러 · 소켓 종료" --> E["return — 연결(NetConnection) 종료"]
 ```
 
 왜 이런 구조인가 — FMLE류 인코더는 방송을 껐다 켤 때 **TCP 연결은 유지한 채**

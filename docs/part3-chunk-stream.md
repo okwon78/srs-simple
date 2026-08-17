@@ -25,12 +25,14 @@
 
 주인공은 `SrsProtocol`의 수신 체인 하나다:
 
-```text
-recv_message                     완성된 메시지 하나가 나올 때까지 루프
- └─ recv_interlaced_message      청크 1개 처리
-     ├─ read_basic_header        fmt(2bit) + csid → 어느 재조립 흐름인가
-     ├─ read_message_header      fmt별 0/3/7/11바이트 + extended timestamp
-     └─ read_message_payload     chunk_size만큼 누적, 다 차면 메시지 완성
+```mermaid
+flowchart TB
+    A["<b>recv_message</b><br/>완성된 메시지 하나가 나올 때까지 루프"] --> B["<b>recv_interlaced_message</b><br/>청크 <b>1개</b>만 처리"]
+    B --> C["<b>read_basic_header</b><br/>fmt(2bit) + csid → 어느 재조립 흐름인가"]
+    C --> D["<b>read_message_header</b><br/>fmt별 11/7/3/0바이트 + extended timestamp"]
+    D --> E["<b>read_message_payload</b><br/>chunk_size만큼 누적"]
+    E -- "payload_length 미달 — 미완성 (NULL)" --> B
+    E -- "다 찼다 — 메시지 완성" --> F["<b>on_recv_message</b> 훅 (Part 4)<br/>→ 호출자에게 메시지 반환"]
 ```
 
 이 네 함수([srs_protocol_rtmp_stack.cpp](../src/protocol/srs_protocol_rtmp_stack.cpp))가
@@ -53,12 +55,17 @@ payload 길이도 대개 같고, timestamp만 일정한 간격(delta)으로 증�
 2비트 `fmt`가 선언한다:
 
 ```text
-청크 1개의 구성:
-┌──────────────┬─────────────────┬────────────────────┬───────────────────┐
-│ basic header │ message header  │ extended timestamp │ chunk data        │
-│ 1~3 bytes    │ fmt별 11/7/3/0B  │ 0 또는 4 bytes      │ ≤ chunk_size      │
-└──────────────┴─────────────────┴────────────────────┴───────────────────┘
+청크 1개의 구성
+┌──────────────┬────────────────┬────────────────────┬───────────────┐
+│ basic header │ message header │ extended timestamp │ chunk data    │
+│   1~3 B      │  11/7/3/0 B    │     0 or 4 B       │ <= chunk_size │
+└──────────────┴────────────────┴────────────────────┴───────────────┘
 ```
+
+- **basic header**: `fmt`와 `csid`. 항상 있다 (§2)
+- **message header**: 크기를 `fmt`가 선언한다 — 이 표가 차등 인코딩의 전부 (§3.1)
+- **extended timestamp**: timestamp 필드가 `0xFFFFFF`일 때만 붙는다 (§4)
+- **chunk data**: 메시지 페이로드의 조각. 마지막 조각만 `chunk_size`보다 작다
 
 | fmt | 크기 | 담는 것                                       | 뜻                                |
 | --- | ---- | --------------------------------------------- | --------------------------------- |
@@ -81,10 +88,13 @@ payload 길이도 대개 같고, timestamp만 일정한 간격(delta)으로 증�
 모든 청크의 첫 바이트는 같은 구조다:
 
 ```text
- 0 1 2 3 4 5 6 7
-+-+-+-+-+-+-+-+-+
-|fmt|   cs id   |     fmt: 상위 2비트, csid: 하위 6비트
-+-+-+-+-+-+-+-+-+
+ MSB                         LSB
+ 0   1   2   3   4   5   6   7      ← bit
++---+---+---+---+---+---+---+---+
+|  fmt  |        cs id          |
++---+---+---+---+---+---+---+---+
+ └─ (b >> 6) & 0x03                   fmt   : 0~3 — message header 크기를 결정 (§3.1)
+         └─ b & 0x3f                  cs id : 2~63 — 0·1은 확장 마커 (§2.1)
 ```
 
 파싱은 마스크와 시프트 한 번씩이다 ([srs_protocol_rtmp_stack.cpp:645-647](../src/protocol/srs_protocol_rtmp_stack.cpp#L645-L647)):
@@ -111,9 +121,10 @@ csid 6비트로는 0~63까지만 표현된다. 그래서 **0과 1을 확장 마�
 ([srs_protocol_rtmp_stack.cpp:649-671](../src/protocol/srs_protocol_rtmp_stack.cpp#L649-L671)):
 
 ```text
-csid 필드 = 2~63  →  그 값이 곧 csid            (1바이트 형식)
-csid 필드 = 0     →  다음 1바이트 b1, csid = 64 + b1          (64~319)
-csid 필드 = 1     →  다음 2바이트 b1 b2, csid = 64 + b1 + b2*256  (64~65599)
+1바이트 형식   [fmt| 2~63 ]                        csid = 필드값 그대로        (2~63)
+2바이트 형식   [fmt|  0   ][   b1   ]              csid = 64 + b1            (64~319)
+3바이트 형식   [fmt|  1   ][   b1   ][   b2   ]    csid = 64 + b1 + b2*256   (64~65599)
+                     ▲ 확장 마커                          ▲ b2가 상위 바이트 (리틀엔디언!)
 ```
 
 확장 바이트가 0이 아니라 **64부터 시작**하는 것에 주의 — 0~63은 1바이트 형식으로 이미 표현
@@ -141,17 +152,25 @@ static char mh_sizes[] = {11, 7, 3, 0};
 int mh_size = mh_sizes[(int)fmt];
 ```
 
-fmt=0의 11바이트를 펼치면:
+네 가지 fmt를 한 장에 겹쳐 놓으면, fmt가 커질수록 **오른쪽 필드부터 차례로 지워지는**
+모양이 보인다 — 지워진 필드는 "직전과 같음"으로 상속된다:
 
 ```text
-┌───────────────┬────────────────┬──────┬──────────────────┐
-│ timestamp     │ payload_length │ type │ stream_id        │
-│ 3B, 빅엔디언    │ 3B, 빅엔디언     │ 1B   │ 4B, 리틀엔디언 (!) │
-└───────────────┴────────────────┴──────┴──────────────────┘
-```
+fmt=0 (11B)  ┌───────────────┬────────────────┬──────┬──────────────────┐
+             │ timestamp  3B │ payload_len 3B │type1B│  stream_id 4B    │
+             └───────────────┴────────────────┴──────┴──────────────────┘
+               절대값 · BE        BE                       LE (!) ← 여기만 반대
 
-fmt=1은 여기서 stream_id를 뺀 7바이트(timestamp 자리는 delta), fmt=2는 delta 3바이트만,
-fmt=3은 0바이트다.
+fmt=1  (7B)  ┌───────────────┬────────────────┬──────┐
+             │ ts delta   3B │ payload_len 3B │type1B│    stream_id → 상속
+             └───────────────┴────────────────┴──────┘
+
+fmt=2  (3B)  ┌───────────────┐
+             │ ts delta   3B │                    length · type · sid → 상속
+             └───────────────┘
+
+fmt=3  (0B)   (message header 없음)               delta 포함 전부 → 상속
+```
 
 두 가지 저수준 디테일이 눈에 띈다. 첫째, **stream_id만 리틀엔디언**이다. RTMP의 다른 모든
 멀티바이트 필드는 빅엔디언인데 이 필드 하나만 반대다 — 스펙이 그렇게 정해 버렸고, 모두가
@@ -219,6 +238,13 @@ fmt=3에는 함정이 하나 있다. `0xC4`는 두 가지 상황에서 온다:
 2. **헤더가 완전히 같은 새 메시지**: FMLE가 오디오 프레임을 보낼 때, 두 번째 프레임부터는
    메시지 전체가 `0xC4` + 페이로드다. 이때는 **직전 delta를 다시 한 번 누적**해야 한다.
 
+```mermaid
+flowchart TB
+    A["0xC4 도착 — fmt=3, csid=4<br/>message header 0바이트 = 전부 상속"] --> B{"조립 중인 메시지가 있는가?<br/>is_first_chunk_of_msg = !chunk-&gt;msg"}
+    B -- "있다" --> C["① <b>연속 청크</b><br/>chunk-&gt;msg 에 페이로드를 이어 붙인다<br/>timestamp는 건드리지 않는다"]
+    B -- "없다" --> D["② <b>헤더가 완전히 같은 새 메시지</b><br/>timestamp += timestamp_delta<br/>직전 delta까지 상속해 누적한다"]
+```
+
 두 경우를 가르는 것이 `is_first_chunk_of_msg = !chunk->msg`
 ([srs_protocol_rtmp_stack.cpp:715](../src/protocol/srs_protocol_rtmp_stack.cpp#L715))이다.
 조립 중인 메시지가 없는데 fmt=3이 왔다면 새 메시지이고, delta를 적용한다
@@ -264,8 +290,13 @@ timestamp 필드는 3바이트라 최댓값이 0xFFFFFF(약 4.66시간)다. 그�
 **0xFFFFFF를 마커로 채우고**, message header 직후에 4바이트 extended timestamp를 덧붙인다:
 
 ```text
-│ ff ff ff │ length │ type │ stream_id │ 01 23 45 67 │ payload...
-  ▲ "진짜 값은 뒤에 있음"                 ▲ 실제 timestamp = 0x01234567
+fmt=0 message header (11B)                    extended timestamp (4B)
+┌──────────┬────────┬──────┬───────────┐   ┌─────────────┐
+│ ff ff ff │ length │ type │ stream_id │   │ 01 23 45 67 │  payload…
+└──────────┴────────┴──────┴───────────┘   └─────────────┘
+      ▲                                            ▲
+      마커: "진짜 값은 뒤에 있음"                     실제 timestamp = 0x01234567
+      (0xFFFFFF 자체를 값으로 쓸 수는 없다)            읽은 뒤 &= 0x7fffffff — 31비트로 접는다
 ```
 
 수신 코드는 `timestamp_delta >= 0xFFFFFF`이면 `has_extended_timestamp`를 세우고 4바이트를
@@ -289,6 +320,14 @@ FLV 스펙은 31비트를 가정하므로, 안전한 교집합인 31비트를 �
 SRS의 해법은 정직한 휴리스틱이다: **일단 4바이트를 읽어 보고, 직전에 기억해 둔 extended
 timestamp와 값이 다르면 페이로드였다고 판단해 되돌린다**
 ([srs_protocol_rtmp_stack.cpp:879-901](../src/protocol/srs_protocol_rtmp_stack.cpp#L879-L901)):
+
+```mermaid
+flowchart TB
+    A["fmt=3 청크 — message header 0바이트<br/>다음 4바이트는 ext ts인가, 페이로드 첫 4바이트인가?<br/>알려 주는 신호 필드가 없다"] --> B["일단 4바이트를 읽는다"]
+    B --> C{"chunk-&gt;extended_timestamp<br/>기억해 둔 값과 같은가?"}
+    C -- "같다 — adobe 스타일<br/>(FMLE · FMS · Flash)" --> D["ext ts로 소비<br/>같은 메시지의 연속 청크라면<br/>timestamp가 같을 수밖에 없다"]
+    C -- "다르다 — ffmpeg / librtmp 스타일" --> E["페이로드였다 → 되돌린다<br/>mh_size -= 4 · in_buffer-&gt;skip(-4)"]
+```
 
 ```cpp
 uint32_t chunk_extended_timestamp = (uint32_t)chunk->extended_timestamp;
@@ -379,9 +418,11 @@ Part 1의 인터리빙 그림이 이 상태 기계에서 어떻게 굴러가는�
 시나리오로 따라가 보자. 와이어에 이 순서로 도착한다:
 
 ```text
-[cid6 fmt0 헤더, video 200B 선언][video 128B]   ← cid6: 조립 중 (128/200)
-[cid7 fmt0 헤더, audio 4B][audio 4B]            ← cid7: 즉시 완성!
-[0xC6 (cid6 fmt3)][video 나머지 72B]             ← cid6: 완성 (200/200)
+와이어 도착 순서                                    chunk_streams[] 상태
+────────────────────────────────────────────────  ──────────────────────────
+[cid6 fmt0 hdr: video 200B][video 128B]           cid6: 128/200 — 조립 중
+[cid7 fmt0 hdr: audio   4B][audio   4B]           cid7:   4/4  — 완성 ★ 먼저 배출!
+[0xC6 = cid6 fmt3]         [video  72B]           cid6: 200/200 — 완성
 ```
 
 `recv_message`를 부르면 **오디오가 먼저 나온다**. 나중에 시작한 메시지가 먼저 완성되는 것 —
@@ -460,10 +501,13 @@ in과 out이 **독립된 협상**이라는 점을 기억하자 — 서버는 600
 입력에 재주입**해 원본 메시지가 복원되는지 본다. 이때 출력 크기의 산수가 §6의 규칙 그대로다:
 
 ```text
-300바이트, out_chunk_size=128:
-  12B (c0: basic 1 + mh 11) + 128B
-+  1B (c3)                  + 128B
-+  1B (c3)                  +  44B   = 314바이트
+300바이트 오디오 메시지, out_chunk_size = 128
+     헤더                         페이로드 조각
+     12B  (c0: basic 1 + mh 11)  +  128B
++     1B  (c3: basic 1)          +  128B
++     1B  (c3: basic 1)          +   44B
+  ─────────────────────────────────────────
+      14B                        +  300B    = 314 바이트
 ```
 
 extended timestamp 버전(`SendExtendedTimestampRoundTrip`,

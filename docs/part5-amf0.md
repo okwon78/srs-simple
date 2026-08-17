@@ -46,16 +46,16 @@ srs_simple의 구현은 [srs_protocol_amf0.{hpp,cpp}](../src/protocol/srs_protoc
 ([srs_protocol_rtmp_stack.cpp:368](../src/protocol/srs_protocol_rtmp_stack.cpp#L368))가
 페이로드를 AMF0로 해석하기 시작한다:
 
-```text
-TCP → [청크 재조립] → SrsCommonMessage(type=20, payload=바이트들)
-                              │
-                              ▼
-        do_decode_message: 페이로드의 첫 값(커맨드 이름 string)을 읽고
-                           → "connect"면 SrsConnectAppPacket::decode
-                           → "play"면 SrsPlayPacket::decode ...
-                              │
-                              ▼
-        각 패킷의 decode()가 srs_amf0_read_* 함수들로 나머지를 파싱
+```mermaid
+flowchart TB
+    A["TCP → 청크 재조립 (Part 3)"] --> B["SrsCommonMessage<br/>type = 20 또는 18, payload = 바이트 덩어리"]
+    B --> C["<b>do_decode_message</b><br/>페이로드의 첫 값 = 커맨드 이름 string 을 AMF0로 읽는다"]
+    C -- "connect" --> D["SrsConnectAppPacket::decode"]
+    C -- "play" --> E["SrsPlayPacket::decode"]
+    C -- "publish · createStream · onMetaData …" --> F["그 밖의 SrsPacket 서브클래스::decode"]
+    D --> G["<b>srs_amf0_read_* / SrsAmf0Any</b><br/>나머지 값을 파싱 — <b>이 글의 주제</b>"]
+    E --> G
+    F --> G
 ```
 
 즉 AMF0 코덱은 패킷 클래스들(Part 6~8의 주인공)의 **부품**이다. 이 글에서는 부품
@@ -104,24 +104,32 @@ AMF0의 문법은 한 문장이다: **모든 값은 마커 1바이트로 시작�
 각 타입의 와이어 포맷을 한 장에 모으면:
 
 ```text
-Number    ┌────┬───────────────────────────────┐
-          │0x00│ IEEE754 double, 8B, BE        │      1.0 → 00 3F F0 00 00 00 00 00 00
-          └────┴───────────────────────────────┘
-Boolean   ┌────┬────┐
-          │0x01│ b  │                                 true → 01 01
-          └────┴────┘
-String    ┌────┬─────────┬─────────────────────┐
-          │0x02│ len(2B) │ utf8 bytes          │      "live" → 02 00 04 6C 69 76 65
-          └────┴─────────┴─────────────────────┘
-Null      ┌────┐              Undefined ┌────┐
-          │0x05│                        │0x06│
-          └────┘                        └────┘
-Object    ┌────┬── property* ──────────────┬──────────┐
-          │0x03│ len(2B)+key │ value(any)  │ 00 00 09 │   key에는 마커가 없다!
-          └────┴─────────────┴─────────────┴──────────┘
-EcmaArray ┌────┬──────────┬── property* ───┬──────────┐
-          │0x08│ count(4B)│ Object와 동일  │ 00 00 09 │
-          └────┴──────────┴────────────────┴──────────┘
+Number     ┌──────┬──────────────────────────────────┐
+ (0x00)    │ 0x00 │  IEEE754 double, 8B, big-endian  │   1.0 → 00 3F F0 00 00 00 00 00 00
+           └──────┴──────────────────────────────────┘
+
+Boolean    ┌──────┬──────┐
+ (0x01)    │ 0x01 │  b   │                               true → 01 01
+           └──────┴──────┘
+
+String     ┌──────┬─────────┬───────────────────────┐
+ (0x02)    │ 0x02 │ len 2B  │  utf8 bytes           │   "live" → 02 00 04 6C 69 76 65
+           └──────┴─────────┴───────────────────────┘
+
+Null       ┌──────┐          Undefined  ┌──────┐
+ (0x05)    │ 0x05 │           (0x06)    │ 0x06 │          마커 1바이트가 전부
+           └──────┘                     └──────┘
+
+Object     ┌──────┬─────────────────────────────────┬──────────┐
+ (0x03)    │ 0x03 │ (len 2B + key) + value(any) ... │ 00 00 09 │
+           └──────┴─────────────────────────────────┴──────────┘
+                      ▲ key에는 마커가 없다!            ▲ object-eof
+                        (마커 없는 utf8)                  = 빈 key + 0x09
+
+EcmaArray  ┌──────┬──────────┬─────────────────────────────────┬──────────┐
+ (0x08)    │ 0x08 │ count 4B │ same property body as Object    │ 00 00 09 │
+           └──────┴──────────┴─────────────────────────────────┴──────────┘
+                      ▲ 파서는 이 값을 믿지 않는다 — eof까지 읽으며 직접 센다 (§3)
 ```
 
 세 가지 함정을 짚어 둔다:

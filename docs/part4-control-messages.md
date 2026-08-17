@@ -100,9 +100,10 @@ srs_simple은 항상 즉시 자동 응답한다 (CLAUDE.md §5.6).
 페이로드는 새 청크 크기 4바이트가 전부다:
 
 ```text
+SetChunkSize (type 1) — payload 4B
 0               4
 ┌───────────────┐
-│ chunk_size    │  4B, big-endian
+│  chunk_size   │  4B, big-endian.  스펙 최대 65536, 최소 128 (§아래 흉터)
 └───────────────┘
 ```
 
@@ -126,12 +127,12 @@ srs_simple은 항상 즉시 자동 응답한다 (CLAUDE.md §5.6).
 와이어 바이트를 보자 — 컨트롤 메시지 전체 청크가 이렇게 생겼다:
 
 ```text
-02              basic header: fmt=0, csid=2
-00 00 00        timestamp = 0
-00 00 04        payload_length = 4
-01              message type = 1 (SetChunkSize)
-00 00 00 00     stream_id = 0
-00 00 01 00     chunk_size = 256
+02             ──  basic header      fmt=0, csid=2 (프로토콜 컨트롤 채널)
+00 00 00       ─┐                    timestamp      = 0
+00 00 04        │                    payload_length = 4
+01              │  message header    type = 1 (SetChunkSize)
+00 00 00 00    ─┘  (fmt=0, 11B)      stream_id = 0 (연결 수준)
+00 00 01 00    ──  payload (4B)      chunk_size = 256
 ```
 
 ### 타이밍 규칙: connect 응답보다 먼저 (OBS 이슈 #454)
@@ -163,10 +164,11 @@ if ((err = rtmp->response_connect_app(req, local_ip.c_str())) != srs_success) { 
 카운터다:
 
 ```text
-WindowAckSize(5)            Acknowledgement(3)
-┌───────────────┐           ┌─────────────────┐
-│ window (4B)   │           │ sequence_number │  4B: 누적 수신 바이트
-└───────────────┘           └─────────────────┘
+WindowAckSize (type 5)          Acknowledgement (type 3)
+"W바이트마다 확인해 달라"          "지금까지 총 N바이트 받았다"
+┌─────────────────┐             ┌─────────────────┐
+│   window  4B    │             │ sequence_number │  4B — 누적 수신 바이트
+└─────────────────┘             └─────────────────┘
 ```
 
 TCP가 이미 ACK를 해 주는데 왜 응용 계층에 또 있을까? RTMP가 설계된 환경에서는 중간에
@@ -180,11 +182,20 @@ WindowAckSize를 보내는데, 서버가 ACK를 안 보내 주면 일부 인코�
 
 흐름 전체는 이렇다:
 
-```text
-OBS ── WindowAckSize(2500000) ────▶ 서버    in_ack_size.window = 2500000
-OBS ── 미디어 청크들 …  ──────────▶ 서버    수신 바이트 누적
-                     (delta ≥ window/2 되는 순간)
-OBS ◀── Acknowledgement(seq) ────── 서버    seq = 누적 수신 바이트
+```mermaid
+sequenceDiagram
+    participant O as OBS / ffmpeg (publisher)
+    participant S as 서버
+
+    O->>S: WindowAckSize(2500000)
+    Note right of S: in_ack_size.window = 2500000
+    loop 미디어 청크가 흐르는 동안
+        O->>S: audio / video 청크
+        Note right of S: skt->get_recv_bytes() 누적
+    end
+    Note right of S: delta = recv_bytes - 마지막 ACK 시점<br/>delta >= window / 2 가 되는 순간
+    S->>O: Acknowledgement(seq = 누적 수신 바이트)
+    Note left of O: ACK가 늦으면 일부 인코더는<br/>송신을 멈추고 블록한다
 ```
 
 자동 송신 로직이 `response_acknowledgement_message`
@@ -242,10 +253,12 @@ UserControl은 단일 메시지가 아니라 **이벤트 봉투**다. 2바이트
 데이터가 붙는다:
 
 ```text
-┌──────────────┬──────────────┬──────────────────────────┐
-│ event_type   │ event_data   │ extra_data (4B)          │
-│ 2B, BE       │ 보통 4B      │ SetBufferLength일 때만    │
-└──────────────┴──────────────┴──────────────────────────┘
+UserControl (type 4) — 길이가 event_type에 따라 달라진다
+┌──────────────┬──────────────────┬──────────────────────┐
+│ event_type   │   event_data     │      extra_data      │
+│    2B, BE    │  4B (0x1a: 1B)   │  4B - SetBufferLength│
+└──────────────┴──────────────────┴──────────────────────┘
+   ▲ 이 2바이트를 읽어야 나머지 길이를 알 수 있다 — 고정 스키마가 아니다
 ```
 
 이벤트 테이블 ([SrcPCUCEventType, srs_protocol_rtmp_stack.hpp:979-1044](../src/protocol/srs_protocol_rtmp_stack.hpp#L979-L1044)):
@@ -316,9 +329,11 @@ timestamp 4바이트)가 나타난다. 참고로 이 테스트의 입력은 fmt=
 유일하게 페이로드가 5바이트인 컨트롤 메시지다:
 
 ```text
+SetPeerBandwidth (type 6) — payload 5B
 ┌────────────────────┬────────────┐
-│ bandwidth (4B BE)  │ type (1B)  │   type: 0=hard, 1=soft, 2=dynamic
-└────────────────────┴────────────┘
+│  bandwidth  4B BE  │  type  1B  │   0 = hard  (반드시 준수)
+└────────────────────┴────────────┘   1 = soft  (현재 대역폭과 비교해 작은 쪽)
+                                      2 = dynamic (hard였다가 상황 봐서 완화)
 ```
 
 의도된 의미는 "상대의 송신 대역폭을 제한한다"이고 limit type이 강제 수준이다 — hard는
@@ -340,12 +355,21 @@ type은 dynamic), 받는 쪽 경로는 아예 없다 — `SrsSetPeerBandwidthPac
 시퀀스가 완성된다 (`service_cycle`,
 [srs_app_rtmp_conn.cpp:122-149](../src/app/srs_app_rtmp_conn.cpp#L122-L149)):
 
-```text
-C→S  connect("live")                          [csid3, type20, AMF0]
-S→C  WindowAckSize(2500000)                   [csid2, type5]  ← "ACK 보내 달라" (의례)
-S→C  SetPeerBandwidth(2500000, dynamic)       [csid2, type6]  ← 의례
-S→C  SetChunkSize(60000)                      [csid2, type1]  ← _result보다 먼저! (#454)
-S→C  _result(NetConnection.Connect.Success)   [csid3, type20, 128B 초과]
+```mermaid
+sequenceDiagram
+    participant C as 클라이언트
+    participant S as 서버
+
+    C->>S: connect("live") — csid 3, type 20 (AMF0)
+    rect rgba(130, 170, 255, 0.12)
+        Note over C,S: 부트스트랩 — 순서 자유도는 앞의 둘뿐
+        S->>C: WindowAckSize(2500000) — csid 2, type 5
+        S->>C: SetPeerBandwidth(2500000, dynamic) — csid 2, type 6
+        S->>C: SetChunkSize(60000) — csid 2, type 1
+    end
+    Note right of S: ↑ 반드시 _result 앞! (OBS 이슈 #454)
+    S->>C: _result(NetConnection.Connect.Success) — csid 3, type 20, 128B 초과
+    Note left of C: _result를 받아야 다음 커맨드를 보낸다
 ```
 
 순서에 자유도가 있는 것은 앞의 둘뿐이다. SetChunkSize만은 반드시 `_result` 앞이어야
