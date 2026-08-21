@@ -265,6 +265,8 @@ static srs_error_t mock_server_listen(SrsServer* server, int* pport)
     srs_error_t err = srs_success;
 
     _srs_config->listen_port = 0;
+    // S10: HTTP 리스너도 임시 포트로 — 8080을 실서버가 점유해도 테스트가 통과해야 한다.
+    _srs_config->http_listen_port = 0;
     if ((err = server->initialize()) != srs_success) {
         return srs_error_wrap(err, "initialize");
     }

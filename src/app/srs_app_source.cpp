@@ -11,6 +11,7 @@
 #include <sstream>
 
 #include <srs_app_config.hpp>
+#include <srs_app_hls.hpp>
 #include <srs_kernel_codec.hpp>
 #include <srs_kernel_error.hpp>
 #include <srs_kernel_flv.hpp>
@@ -678,6 +679,111 @@ srs_error_t SrsMetaCache::update_vsh(SrsSharedPtrMessage* msg)
     return srs_success;
 }
 
+SrsOriginHub::SrsOriginHub()
+{
+    source = NULL;
+    req_ = NULL;
+    is_active = false;
+
+    format = new SrsFormat();
+    hls = new SrsHls();
+}
+
+SrsOriginHub::~SrsOriginHub()
+{
+    srs_freep(hls);
+    srs_freep(format);
+}
+
+srs_error_t SrsOriginHub::initialize(SrsLiveSource* s, SrsRequest* r)
+{
+    srs_error_t err = srs_success;
+
+    req_ = r;
+    source = s;
+
+    if ((err = format->initialize()) != srs_success) {
+        return srs_error_wrap(err, "format initialize");
+    }
+
+    if ((err = hls->initialize(this, req_)) != srs_success) {
+        return srs_error_wrap(err, "hls initialize");
+    }
+
+    return err;
+}
+
+bool SrsOriginHub::active()
+{
+    return is_active;
+}
+
+srs_error_t SrsOriginHub::on_audio(SrsSharedPtrMessage* shared_audio)
+{
+    srs_error_t err = srs_success;
+
+    SrsSharedPtrMessage* msg = shared_audio;
+
+    // 코덱 파싱 (시퀀스 헤더면 AudioSpecificConfig, 아니면 AAC raw 샘플).
+    // 파싱 실패가 publish를 죽이지 않게 경고만 남기고 무시한다 (CLAUDE.md §5.6 S10).
+    if ((err = format->on_audio(msg->timestamp, msg->payload, msg->size)) != srs_success) {
+        srs_warn("hub: ignore audio format error %s", srs_error_desc(err).c_str());
+        srs_error_reset(err);
+        return err;
+    }
+
+    // HLS 오류도 publish를 죽이지 않는다 — 원본 hls_on_error의 'ignore' 전략으로 고정.
+    if ((err = hls->on_audio(msg, format)) != srs_success) {
+        srs_warn("hls: ignore audio error %s", srs_error_desc(err).c_str());
+        hls->on_unpublish();
+        srs_error_reset(err);
+    }
+
+    return err;
+}
+
+srs_error_t SrsOriginHub::on_video(SrsSharedPtrMessage* shared_video, bool is_sequence_header)
+{
+    srs_error_t err = srs_success;
+
+    SrsSharedPtrMessage* msg = shared_video;
+
+    // 코덱 파싱 (시퀀스 헤더면 avcC의 SPS/PPS, 아니면 NALU 샘플 목록).
+    if ((err = format->on_video(msg->timestamp, msg->payload, msg->size)) != srs_success) {
+        srs_warn("hub: ignore video format error %s", srs_error_desc(err).c_str());
+        srs_error_reset(err);
+        return err;
+    }
+
+    if ((err = hls->on_video(msg, format)) != srs_success) {
+        srs_warn("hls: ignore video error %s", srs_error_desc(err).c_str());
+        hls->on_unpublish();
+        srs_error_reset(err);
+    }
+
+    return err;
+}
+
+srs_error_t SrsOriginHub::on_publish()
+{
+    srs_error_t err = srs_success;
+
+    if ((err = hls->on_publish()) != srs_success) {
+        return srs_error_wrap(err, "hls publish");
+    }
+
+    is_active = true;
+
+    return err;
+}
+
+void SrsOriginHub::on_unpublish()
+{
+    is_active = false;
+
+    hls->on_unpublish();
+}
+
 // 원본은 main에서 생성/대입하지만, _srs_config와 같은 정적 초기화 이디엄을 쓴다.
 static SrsLiveSourceManager _sources_instance;
 SrsLiveSourceManager* _srs_sources = &_sources_instance;
@@ -749,6 +855,7 @@ SrsLiveSource::SrsLiveSource()
 
     gop_cache = new SrsGopCache();
     meta = new SrsMetaCache();
+    hub = new SrsOriginHub();
 }
 
 SrsLiveSource::~SrsLiveSource()
@@ -757,6 +864,8 @@ SrsLiveSource::~SrsLiveSource()
     // for all consumers are auto free.
     consumers.clear();
 
+    // hub가 req를 참조하므로 req보다 먼저 해제한다.
+    srs_freep(hub);
     srs_freep(meta);
     srs_freep(gop_cache);
 
@@ -769,6 +878,10 @@ srs_error_t SrsLiveSource::initialize(SrsRequest* r)
 
     srs_assert(!req);
     req = r->copy();
+
+    if ((err = hub->initialize(this, req)) != srs_success) {
+        return srs_error_wrap(err, "hub");
+    }
 
     return err;
 }
@@ -865,6 +978,11 @@ srs_error_t SrsLiveSource::on_audio_imp(SrsSharedPtrMessage* msg)
     // 원본은 SrsFormat 파싱 결과를 쓰지만, kernel codec 판별자로 대체 (CLAUDE.md §5.6).
     bool is_sequence_header = SrsFlvAudio::sh(msg->payload, msg->size);
 
+    // Copy to hub to all utilities (S10: 코덱 파싱 + HLS).
+    if ((err = hub->on_audio(msg)) != srs_success) {
+        return srs_error_wrap(err, "consume audio");
+    }
+
     // copy to all consumer
     for (int i = 0; i < (int)consumers.size(); i++) {
         SrsLiveConsumer* consumer = consumers.at(i);
@@ -921,6 +1039,11 @@ srs_error_t SrsLiveSource::on_video_imp(SrsSharedPtrMessage* msg)
         return srs_error_wrap(err, "meta update video");
     }
 
+    // Copy to hub to all utilities (S10: 코덱 파싱 + HLS).
+    if ((err = hub->on_video(msg, is_sequence_header)) != srs_success) {
+        return srs_error_wrap(err, "hub consume video");
+    }
+
     // copy to all consumer
     for (int i = 0; i < (int)consumers.size(); i++) {
         SrsLiveConsumer* consumer = consumers.at(i);
@@ -963,6 +1086,12 @@ srs_error_t SrsLiveSource::on_publish()
         return srs_error_wrap(err, "source id change");
     }
 
+    // 허브(HLS) 기동 — 세그먼트 디렉터리 생성 실패 등은 publish 실패로 전파한다.
+    if ((err = hub->on_publish()) != srs_success) {
+        can_publish_ = true;
+        return srs_error_wrap(err, "hub publish");
+    }
+
     // Reset the metadata cache, to make VLC happy when disable/enable stream.
     // @see https://github.com/ossrs/srs/issues/1630#issuecomment-597979448
     meta->clear();
@@ -978,6 +1107,9 @@ void SrsLiveSource::on_unpublish()
     if (can_publish_) {
         return;
     }
+
+    // 허브(HLS) 정리 — 남은 캐시를 마지막 세그먼트에 밀어 넣고 닫는다.
+    hub->on_unpublish();
 
     // only clear the gop cache,
     // donot clear the sequence header, for it maybe not changed,
@@ -1016,8 +1148,7 @@ srs_error_t SrsLiveSource::consumer_dumps(SrsLiveConsumer* consumer, bool ds, bo
     consumer->set_queue_size(queue_size);
 
     // If stream is publishing, dumps the sequence header and gop cache.
-    // (원본은 hub->active() — OriginHub 제거로 publish 상태를 직접 본다)
-    bool active = !can_publish_;
+    bool active = hub->active();
     if (active) {
         // Copy metadata and sequence header to consumer.
         if ((err = meta->dumps(consumer, jitter_algorithm, dm, ds)) != srs_success) {

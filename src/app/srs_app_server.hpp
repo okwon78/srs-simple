@@ -18,6 +18,8 @@ private:
     SrsResourceManager* conn_manager;
     // RTMP stream listener, over TCP.
     SrsTcpListener* rtmp_listener_;
+    // HTTP stream listener (S10: HLS 파일 서빙), over TCP.
+    SrsTcpListener* http_listener_;
 public:
     SrsServer();
     virtual ~SrsServer();

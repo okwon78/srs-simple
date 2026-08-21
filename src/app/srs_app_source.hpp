@@ -5,10 +5,11 @@
 //   SrsLiveConsumer    — play 클라이언트 1개 = jitter + queue + cond wait
 //   SrsGopCache        — 키프레임에서 clear 후 재시작. 항상 [마지막 키프레임..현재] 유지
 //   SrsMetaCache       — onMetaData + AVC/AAC 시퀀스 헤더. 중간 입장 플레이어의 정합성
+//   SrsOriginHub       — RTMP 밖으로 나가는 소비자(S10: HLS)로의 분기점
 //   SrsLiveSource      — 스트림 1개의 허브. on_audio/on_video/on_meta_data → 팬아웃
 //   SrsLiveSourceManager — "vhost/app/stream" → source 맵
-// 원본 대비 제거: edge/OriginHub(HLS·DVR·Forward)/bridge/SrsFormat(코덱 파싱)/
-// mix_correct·atc/reload/통계/hourglass 소스 청소 — CLAUDE.md §5.6 "S8 부수 단순화".
+// 원본 대비 제거: edge/bridge/mix_correct·atc/reload/통계/hourglass 소스 청소,
+// OriginHub의 DVR·Forward·Transcode·HDS(HLS만 유지 — S10) — CLAUDE.md §5.6.
 // pthread 전환: SrsLiveSource/SrsLiveConsumer에 내부 mutex (CLAUDE.md §5.1).
 #ifndef SRS_APP_SOURCE_HPP
 #define SRS_APP_SOURCE_HPP
@@ -31,6 +32,8 @@ class SrsMessageArray;
 class SrsMessageHeader;
 class SrsOnMetaDataPacket;
 class SrsRequest;
+class SrsFormat;
+class SrsHls;
 
 // The time jitter algorithm:
 // 1. full, to ensure stream start at zero, and ensure stream monotonically increasing.
@@ -250,6 +253,41 @@ public:
     virtual srs_error_t update_vsh(SrsSharedPtrMessage* msg);
 };
 
+// The hub for origin: RTMP 팬아웃 밖의 소비자로 가는 분기점.
+// 원본은 HLS/DVR/Forward/Transcode/HDS를 모두 물고 있으나 HLS만 유지 (CLAUDE.md §5.6 S10).
+// 원본은 SrsLiveSource가 SrsRtmpFormat을 소유하고 hub에 넘기지만,
+// 여기서는 hub가 SrsFormat을 직접 소유한다 — 코덱 파싱의 유일한 소비자가 HLS라서.
+class SrsOriginHub
+{
+private:
+    SrsLiveSource* source;
+    SrsRequest* req_;
+    bool is_active;
+private:
+    // The format, codec information (avcC의 SPS/PPS, AudioSpecificConfig 파싱 결과).
+    SrsFormat* format;
+    // hls handler.
+    SrsHls* hls;
+public:
+    SrsOriginHub();
+    virtual ~SrsOriginHub();
+public:
+    // Initialize the hub with source and request.
+    // @param r The request object, managed by source.
+    virtual srs_error_t initialize(SrsLiveSource* s, SrsRequest* r);
+    // Whether the stream hub is active, or stream is publishing.
+    virtual bool active();
+public:
+    // When got a parsed audio/video packet.
+    virtual srs_error_t on_audio(SrsSharedPtrMessage* shared_audio);
+    virtual srs_error_t on_video(SrsSharedPtrMessage* shared_video, bool is_sequence_header);
+public:
+    // When start publish stream.
+    virtual srs_error_t on_publish();
+    // When stop publish stream.
+    virtual void on_unpublish();
+};
+
 // The source manager to create and refresh all stream sources.
 // 원본은 SrsSharedPtr + hourglass 타이머로 죽은 소스를 청소하지만, 여기서는
 // 생성된 소스를 프로세스 종료까지 유지한다 (CLAUDE.md §5.6 "S8 부수 단순화").
@@ -296,6 +334,8 @@ private:
     SrsGopCache* gop_cache;
     // The metadata cache.
     SrsMetaCache* meta;
+    // The hub for origin server: RTMP 밖(HLS)으로 가는 분기점 (S10).
+    SrsOriginHub* hub;
 private:
     // Whether source is avaiable for publishing.
     bool can_publish_;

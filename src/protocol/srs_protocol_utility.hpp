@@ -28,6 +28,10 @@ extern void srs_discovery_tc_url(std::string tcUrl, std::string& schema, std::st
 // SrsLiveSourceManager(S8)의 소스 맵 키가 된다.
 extern std::string srs_generate_stream_url(std::string vhost, std::string app, std::string stream);
 
+// Build the path from template, replace [vhost],[app],[stream].
+// S10 HLS의 m3u8/ts 파일명 템플릿 치환. (원본: kernel/srs_kernel_utility.cpp)
+extern std::string srs_path_build_stream(std::string template_path, std::string vhost, std::string app, std::string stream);
+
 // Socket address helpers (원본도 이 파일 소속). IPv4 전용으로 단순화.
 // Get the peer ip/port of the connected fd. ip는 실패 시 빈 문자열.
 extern std::string srs_get_peer_ip(int fd);

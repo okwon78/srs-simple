@@ -143,6 +143,20 @@ string srs_generate_stream_url(string vhost, string app, string stream)
     return url;
 }
 
+string srs_path_build_stream(string template_path, string vhost, string app, string stream)
+{
+    std::string path = template_path;
+
+    // variable [vhost]
+    path = srs_string_replace(path, "[vhost]", vhost);
+    // variable [app]
+    path = srs_string_replace(path, "[app]", app);
+    // variable [stream]
+    path = srs_string_replace(path, "[stream]", stream);
+
+    return path;
+}
+
 string srs_get_peer_ip(int fd)
 {
     // 원본은 getnameinfo로 IPv6까지 처리하지만, IPv4 전용으로 축소 (S2의 srs_tcp_listen과 동일).

@@ -2,6 +2,9 @@
 build/
 compile_commands.json
 
+# HLS 런타임 산출물 (세그먼트/m3u8 — S10)
+objs/
+
 # 테스트용 미디어 (README §데모의 ffmpeg 명령으로 생성)
 *.mp4
 

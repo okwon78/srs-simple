@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>srs_simple HLS player</title>
+<style>
+    :root { color-scheme: light dark; }
+    body {
+        font-family: -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+        max-width: 720px; margin: 40px auto; padding: 0 16px;
+    }
+    h1 { font-size: 1.3rem; }
+    video { width: 100%; background: #000; border-radius: 8px; }
+    .row { display: flex; gap: 8px; margin: 12px 0; }
+    input {
+        flex: 1; padding: 8px 10px; font-size: 0.95rem;
+        border: 1px solid #8884; border-radius: 6px; background: transparent; color: inherit;
+    }
+    button {
+        padding: 8px 18px; font-size: 0.95rem; border: 0; border-radius: 6px;
+        background: #0a7cff; color: #fff; cursor: pointer;
+    }
+    button:hover { background: #0965cc; }
+    #status { font-size: 0.85rem; opacity: 0.75; min-height: 1.2em; white-space: pre-wrap; }
+    code { background: #8882; padding: 1px 5px; border-radius: 4px; }
+    .hint { font-size: 0.85rem; opacity: 0.75; line-height: 1.6; }
+</style>
+</head>
+<body>
+<h1>srs_simple — HLS 플레이어</h1>
+
+<div class="row">
+    <input id="url" value="/live/test.m3u8" spellcheck="false">
+    <button id="play">재생</button>
+</div>
+
+<video id="video" controls muted playsinline></video>
+<p id="status"></p>
+
+<p class="hint">
+    먼저 publish를 시작하세요 (첫 세그먼트가 만들어지는 ~10초 후 재생 가능):<br>
+    <code>ffmpeg -re -stream_loop -1 -i test.mp4 -c copy -f flv rtmp://localhost/live/test</code><br>
+    스트림 이름이 다르면 위 입력창의 경로를 <code>/&lt;app&gt;/&lt;stream&gt;.m3u8</code>로 바꾸면 된다.
+    Safari는 네이티브 HLS로, 그 외 브라우저는 hls.js(CDN)로 재생한다.
+</p>
+
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
+<script>
+(function () {
+    var video = document.getElementById('video');
+    var status = document.getElementById('status');
+    var hls = null;
+
+    function setStatus(msg) { status.textContent = msg; }
+
+    function resolveUrl(u) {
+        // 페이지를 file://로 직접 열었을 때도 동작하도록 서버 주소를 보정한다.
+        if (location.protocol === 'file:' && u.charAt(0) === '/') {
+            return 'http://localhost:8080' + u;
+        }
+        return u;
+    }
+
+    function play() {
+        var url = resolveUrl(document.getElementById('url').value.trim());
+        if (hls) { hls.destroy(); hls = null; }
+
+        if (window.Hls && Hls.isSupported()) {
+            hls = new Hls({ liveDurationInfinity: true });
+            hls.loadSource(url);
+            hls.attachMedia(video);
+            hls.on(Hls.Events.MANIFEST_PARSED, function () {
+                setStatus('m3u8 로드 완료 — 재생 시작: ' + url);
+                video.play();
+            });
+            hls.on(Hls.Events.ERROR, function (_e, data) {
+                if (data.fatal) {
+                    setStatus('오류: ' + data.type + ' / ' + data.details +
+                        '\npublish가 진행 중인지, 첫 세그먼트(~10초)가 만들어졌는지 확인하세요.');
+                }
+            });
+        } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+            // Safari 네이티브 HLS.
+            video.src = url;
+            video.play();
+            setStatus('네이티브 HLS로 재생: ' + url);
+        } else {
+            setStatus('이 브라우저는 HLS를 지원하지 않고 hls.js도 로드하지 못했습니다 (인터넷 연결 필요).');
+        }
+    }
+
+    document.getElementById('play').addEventListener('click', play);
+    document.getElementById('url').addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') play();
+    });
+})();
+</script>
+</body>
+</html>

@@ -32,6 +32,7 @@ srs_error_t do_main(int argc, char** argv)
     }
 
     srs_trace("SRS_SIMPLE ready, rtmp://127.0.0.1:%d/live/livestream", _srs_config->listen_port);
+    srs_trace("HLS ready, http://127.0.0.1:%d/live/livestream.m3u8", _srs_config->http_listen_port);
 
     // 워커 스레드들이 서비스하는 동안 메인 스레드는 대기 (Ctrl+C로 종료).
     while (true) {

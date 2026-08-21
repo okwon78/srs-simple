@@ -1,6 +1,5 @@
-// srs_simple — 원본: trunk/src/protocol/srs_protocol_io.hpp + kernel/srs_kernel_io.hpp 병합
-// 원본은 kernel_io(ISrsReader/ISrsStreamWriter/ISrsVectorWriter)와 protocol_io로 나뉘지만,
-// 파일/HLS 등 다른 소비자가 없으므로 하나로 합친다. 인터페이스 이름과 시그니처는 동일하다.
+// srs_simple — 원본: trunk/src/protocol/srs_protocol_io.hpp
+// ISrsReader/ISrsWriter는 S10에서 원본 위치(kernel/srs_kernel_io.hpp)로 복원 — CLAUDE.md §5.6.
 #ifndef SRS_PROTOCOL_IO_HPP
 #define SRS_PROTOCOL_IO_HPP
 
@@ -9,9 +8,11 @@
 #include <sys/types.h>
 #include <sys/uio.h>
 
+#include <srs_kernel_io.hpp>
+
 /**
  * The system io reader/writer architecture:
- *   ISrsReader (read)         ISrsWriter (write/writev)
+ *   ISrsReader (read)         ISrsWriter (write/writev)     ← kernel/srs_kernel_io.hpp
  *        |                          |
  *   ISrsProtocolReader         ISrsProtocolWriter
  *   (+read_fully, recv 타임아웃)  (+send 타임아웃)
@@ -19,31 +20,6 @@
  *         ISrsProtocolReadWriter   ← SrsProtocol/핸드셰이크가 의존하는 유일한 소켓 추상화.
  *                                    실소켓(SrsStSocket)과 utest(MockBufferIO)가 구현한다.
  */
-
-// The reader to read data from channel.
-class ISrsReader
-{
-public:
-    virtual ~ISrsReader() {}
-public:
-    // Read bytes from reader.
-    // @param nread How many bytes read from channel. NULL to ignore.
-    virtual srs_error_t read(void* buf, size_t size, ssize_t* nread) = 0;
-};
-
-// The writer to write stream data to channel.
-// 원본의 ISrsStreamWriter(write) + ISrsVectorWriter(writev) 병합.
-class ISrsWriter
-{
-public:
-    virtual ~ISrsWriter() {}
-public:
-    // Write bytes over writer.
-    // @param nwrite The actual written bytes. NULL to ignore.
-    virtual srs_error_t write(void* buf, size_t size, ssize_t* nwrite) = 0;
-    // Write iov over writer.
-    virtual srs_error_t writev(const iovec* iov, int iov_size, ssize_t* nwrite) = 0;
-};
 
 // Get the statistic of channel.
 class ISrsProtocolStatistic
