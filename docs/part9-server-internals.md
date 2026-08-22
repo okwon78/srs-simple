@@ -16,6 +16,8 @@
 > 7. [커맨드 흐름 (2) — publish와 미디어 메시지](part7-publish.md)
 > 8. [커맨드 흐름 (3) — play와 중간 입장 문제](part8-play.md)
 > 9. **(보너스) 서버 내부 — 팬아웃, 캐시, 지터** (이 글)
+> 10. [(보너스 2) HLS — 같은 스트림을 HTTP로 배달하기](part10-hls.md)
+> 11. [(보너스 3) LL-HLS — 지연과의 싸움: 파트, 블로킹 리로드, fMP4](part11-llhls.md)
 
 이 글은 Part 8까지 읽었다고 가정한다.
 
@@ -58,11 +60,11 @@ flowchart LR
     CO --> N["SrsLiveConsumer N"] --> PN["player N 스레드"]
 ```
 
-스트림의 주소는 [`SrsRequest::get_stream_url`](../src/protocol/srs_protocol_rtmp_stack.cpp#L1522)이
+스트림의 주소는 [`SrsRequest::get_stream_url`](../src/protocol/srs_protocol_rtmp_stack.cpp#L1692)이
 만드는 `"vhost/app/stream"` 문자열이다 — `rtmp://localhost/live/test`로 접속하면
 `"localhost/live/test"` (tcUrl에 `?vhost=` 쿼리가 없으면 host가 그대로 vhost가 되고,
 vhost가 기본값 `__defaultVhost__`일 때만 키에서 생략된다). publisher든 player든 연결이 이 키로
-[`fetch_or_create`](../src/app/srs_app_source.cpp#L699)
+[`fetch_or_create`](../src/app/srs_app_source.cpp#L836)
 (원본 `app/srs_app_source.cpp:1769`)를 부르면 같은 `SrsLiveSource`를 받는다.
 같은 키 → 같은 소스라는 이 한 줄이 "publisher와 player가 만나는" 전부이고, utest
 [SourceManagerFetchOrCreate](../utest/srs_utest_source.cpp#L306)가 검증하는 것도
@@ -73,9 +75,9 @@ vhost가 기본값 `__defaultVhost__`일 때만 키에서 생략된다). publish
 (단순화로 프로세스 종료까지 산다 — CLAUDE.md §5.6), 캐시 2종(MetaCache/GopCache)을
 소유한다. `SrsLiveConsumer`는 **play 연결당 1개**로, 개인 재생 큐(`SrsMessageQueue`)와
 개인 지터(`SrsRtmpJitter`)를 소유한다. consumer는
-[`create_consumer`](../src/app/srs_app_source.cpp#L997)로 소스의 `consumers`
-목록에 등록되고, [소멸자](../src/app/srs_app_source.cpp#L294)가
-[`on_consumer_destroy`](../src/app/srs_app_source.cpp#L1043)로 스스로를 뺀다 —
+[`create_consumer`](../src/app/srs_app_source.cpp#L1185)로 소스의 `consumers`
+목록에 등록되고, [소멸자](../src/app/srs_app_source.cpp#L296)가
+[`on_consumer_destroy`](../src/app/srs_app_source.cpp#L1230)로 스스로를 뺀다 —
 플레이어가 나가도 소스와 방송은 계속된다.
 
 "큐와 지터가 왜 consumer마다 개인 소유인가"가 이번 파트의 복선이다. 큐가 개인
@@ -140,27 +142,31 @@ flowchart LR
 이제 publisher 스레드가 비디오 메시지 하나를 들고 허브에 도착했을 때 일어나는 일을
 따라가자. Part 7의 publish 루프 끝
 ([`process_publish_message`](../src/app/srs_app_rtmp_conn.cpp#L522))이
-[`SrsLiveSource::on_video`](../src/app/srs_app_source.cpp#L897)를 부르고, 소스
-락을 잡은 채 [`on_video_imp`](../src/app/srs_app_source.cpp#L912)
-(원본 `app/srs_app_source.cpp:2408`, 팬아웃은 :2457)로 들어간다. 한 바퀴는 세
+[`SrsLiveSource::on_video`](../src/app/srs_app_source.cpp#L1071)를 부르고, 소스
+락을 잡은 채 [`on_video_imp`](../src/app/srs_app_source.cpp#L1086)
+(원본 `app/srs_app_source.cpp:2408`, 팬아웃은 :2457)로 들어간다. 한 바퀴는 네
 동작이다:
 
 ```cpp
 bool is_sequence_header = SrsFlvVideo::sh(msg->payload, msg->size);
 
 if (is_sequence_header) meta->update_vsh(msg);       // ① sh → MetaCache
-for (컨슈머마다) consumer->enqueue(msg, jitter);      // ② 팬아웃 ← copy() = refcount+1
+hub->on_video(msg, is_sequence_header);               // ② OriginHub → HLS/LL-HLS (Part 10/11)
+for (컨슈머마다) consumer->enqueue(msg, jitter);      // ③ 팬아웃 ← copy() = refcount+1
 if (is_sequence_header) return;                       //    sh는 GOP 캐시 제외
-gop_cache->cache(msg);                                // ③ GOP 캐시
+gop_cache->cache(msg);                                // ④ GOP 캐시
 ```
 
-①과 ③은 Part 8에서 소비하는 쪽을 이미 봤다 — 시퀀스 헤더는 MetaCache로, 프레임은
+①과 ④는 Part 8에서 소비하는 쪽을 이미 봤다 — 시퀀스 헤더는 MetaCache로, 프레임은
 GopCache로, 그리고 새 플레이어의 `consumer_dumps`가 그 보관소를 재생한다. 오디오
-쪽 [`on_audio_imp`](../src/app/srs_app_source.cpp#L860)도 대칭인데, 한 가지
-차이만 있다: [시퀀스 헤더가 아니어도 첫 패킷이면 캐시한다](../src/app/srs_app_source.cpp#L878)
+쪽 [`on_audio_imp`](../src/app/srs_app_source.cpp#L1029)도 대칭인데, 한 가지
+차이만 있다: [시퀀스 헤더가 아니어도 첫 패킷이면 캐시한다](../src/app/srs_app_source.cpp#L1052)
 — MP3처럼 시퀀스 헤더 개념이 없는 코덱의 보험이다.
 
-②가 이 파트의 주인공이다. [`SrsLiveConsumer::enqueue`](../src/app/srs_app_source.cpp#L319)
+②는 RTMP 밖으로 나가는 소비자(HLS, 그리고 S13에서 더해진 LL-HLS)의 분기점이다 — 팬아웃보다
+먼저, publisher 스레드에서 실행된다는 위치만 기억하고 [Part 10](part10-hls.md)/[Part 11](part11-llhls.md)로 미룬다.
+
+③이 이 파트의 주인공이다. [`SrsLiveConsumer::enqueue`](../src/app/srs_app_source.cpp#L321)
 (원본 :450)는 세 단계다: `copy()`로 refcount 사본을 뜨고(§2), 그 사본의
 타임스탬프를 지터로 고쳐 쓰고(§4), 개인 큐에 넣는다(§5). 큐가 충분히
 찼으면(mw_msgs 128개와 350ms치를 둘 다 넘으면 — Part 8 §7의 merged-write) 대기 중인 player
@@ -168,12 +174,12 @@ GopCache로, 그리고 새 플레이어의 `consumer_dumps`가 그 보관소를 
 돌아간다 — **소켓에 쓰는 것은 언제나 player 스레드 자신이다.** 느린 플레이어의
 소켓이 publisher를 막지 못하는 구조적 이유다.
 
-③의 GopCache 내부에는 Part 8 §5에서 본 가드들이 있는데, 서버 내부 관점에서 다시
+④의 GopCache 내부에는 Part 8 §5에서 본 가드들이 있는데, 서버 내부 관점에서 다시
 보면 전부 "publisher의 의도를 추측하는 휴리스틱"이다. 비디오 프레임 없이 오디오만
-[115개(약 3초)](../src/app/srs_app_source.cpp#L472) 연속으로 오면 "비디오를 끈
-방송"으로 추정해 캐시를 비우고([`SRS_PURE_AUDIO_GUESS_COUNT`](../src/app/srs_app_source.cpp#L33),
+[115개(약 3초)](../src/app/srs_app_source.cpp#L474) 연속으로 오면 "비디오를 끈
+방송"으로 추정해 캐시를 비우고([`SRS_PURE_AUDIO_GUESS_COUNT`](../src/app/srs_app_source.cpp#L35),
 [GopCachePureAudio](../utest/srs_utest_source.cpp#L159)), 그래도
-[2,500프레임](../src/app/srs_app_source.cpp#L490)을 넘기면 "키프레임을 안 보내는
+[2,500프레임](../src/app/srs_app_source.cpp#L492)을 넘기면 "키프레임을 안 보내는
 비정상 인코더"로 보고 비운다. RTMP에는 "지금부터 오디오 전용"이라고 알려 주는
 메시지가 없으므로, 서버는 관찰로 추측할 수밖에 없다.
 
@@ -189,7 +195,7 @@ GOP 프리필분은 30초 과거이고(Part 8 §6), 재-publish 직후에는 0�
 §6), 인코더에 따라서는 임의의 값에서 시작하기도 한다. 이걸 그대로 내보내면
 플레이어는 멈추거나 버벅인다.
 
-[`SrsRtmpJitter::correct`](../src/app/srs_app_source.cpp#L48)
+[`SrsRtmpJitter::correct`](../src/app/srs_app_source.cpp#L50)
 (원본 `app/srs_app_source.cpp:74-132`)의 해법은 한 문장이다: **입력 타임스탬프의
 절대값을 믿지 않고, 위생 처리한 델타만 누적한다.** FULL 알고리즘의 전문은 이게
 전부다:
@@ -250,10 +256,10 @@ FULL 고정이지만 원본은 vhost 설정으로 고른다.
 
 서두의 질문 3이 남았다. player 스레드가 소켓에 쓰는 속도보다 publisher가 미는
 속도가 빠르면 — 회선이 느리거나, 플레이어가 멈췄거나 — 그 consumer의 개인 큐가
-자란다. [`SrsMessageQueue::enqueue`](../src/app/srs_app_source.cpp#L140)는 큐의
+자란다. [`SrsMessageQueue::enqueue`](../src/app/srs_app_source.cpp#L142)는 큐의
 길이를 개수가 아니라 **시간**으로 잰다: 첫/끝 메시지의 타임스탬프 차이(duration)가
 상한([`_srs_config->queue_length`](../src/app/srs_app_config.hpp) = 30초)을
-넘으면 [`shrink`](../src/app/srs_app_source.cpp#L225)
+넘으면 [`shrink`](../src/app/srs_app_source.cpp#L227)
 (원본 `app/srs_app_source.cpp:339`)가 발동한다.
 
 순진한 정책은 "오래된 N개 드롭"일 것이다. 그런데 Part 8 §3을 통과한 지금은 그게 왜
@@ -309,7 +315,7 @@ srs_simple은 이를 pthread(1 연결 = 1 스레드)로 바꿨다. 하지만 **�
 **첫째, 블록된 IO를 깨울 수 없다.** [`interrupt()`](../src/app/srs_app_st.cpp#L184)가
 하는 일은 플래그와 에러를 세팅하는 것뿐이라, `recv()`에 블록된 스레드는 그걸 볼 수
 없다. 그래서 srs_simple의 모든 블로킹 지점에는 타임아웃이 깔려 있다 — 소켓은
-`SO_RCVTIMEO`(30초), consumer의 [`wait`](../src/app/srs_app_source.cpp#L381)는
+`SO_RCVTIMEO`(30초), consumer의 [`wait`](../src/app/srs_app_source.cpp#L383)는
 100ms 조건 변수 타임아웃, 리스너와 리소스 매니저도 100ms poll/wait. 주기적으로
 깨어난 스레드가 `pull()`에서 인터럽트를 발견하고 스스로 종료하는 구조다. 그마저도
 느린 소멸 경로에서는 [`~SrsRtmpConn`](../src/app/srs_app_rtmp_conn.cpp#L68)이
@@ -336,7 +342,7 @@ consumer 락을 잡지 않은 채 호출되므로 교착이 없다.
 [`acquire_publish`](../src/app/srs_app_rtmp_conn.cpp#L418)는 `can_publish()`를
 확인한 뒤 `on_publish()`를 부르는데, ST에서는 그 사이에 다른 코루틴이 끼어들 수
 없지만 pthread에서는 publisher 두 명이 검사를 동시에 통과할 수 있다. 그래서
-검사+점유가 [`on_publish`](../src/app/srs_app_source.cpp#L945) **내부에서 락을
+검사+점유가 [`on_publish`](../src/app/srs_app_source.cpp#L1124) **내부에서 락을
 잡은 채** 원자적으로 다시 일어난다 — 진 쪽은 `ERROR_SYSTEM_STREAM_BUSY`를 받는다
 ([LiveSourcePublishBusy](../utest/srs_utest_source.cpp#L208)).
 
@@ -368,10 +374,12 @@ consumer 락을 잡지 않은 채 호출되므로 교착이 없다.
    블록 IO는 타임아웃으로 깨고, 락 순서는 source → consumer, publish 점유는
    `on_publish` 내부에서 원자화, 해제는 남의 스레드(리소스 매니저)가 한다
 
-이것으로 시리즈가 끝났다. 핸드셰이크의 첫 바이트(Part 2)부터 청크 재조립(Part 3),
+이것으로 RTMP 편이 끝났다. 핸드셰이크의 첫 바이트(Part 2)부터 청크 재조립(Part 3),
 컨트롤(Part 4)과 AMF0(Part 5), 커맨드 3부작(Part 6~8), 그리고 그 위의 서버 정책(이
 글)까지 — OBS의 3073바이트가 1,000명의 ffplay에 복사 0회로 도착하는 전체 경로를
-지나왔다.
+지나왔다. 보너스가 하나 더 남아 있다: §3에서 이름만 지나간 `SrsOriginHub` 분기 —
+같은 허브의 두 번째 출구로, RTMP 프레임을 TS 세그먼트로 바꿔 브라우저에 배달하는
+[HLS 경로](part10-hls.md)다 (Part 10).
 
 **이제 원본 SRS를 열자.** 이 시리즈의 존재 이유는 srs_simple이 원본의 이름과 구조를
 1:1로 미러링한다는 것이었다. `SrsProtocol::recv_interlaced_message`도,
@@ -379,18 +387,18 @@ consumer 락을 잡지 않은 채 호출되므로 교착이 없다.
 이 시리즈에서 읽은 코드의 확장판이 보인다. 원본의 어디를 열면 되는지는 srs_simple의
 CLAUDE.md §7 "탐색 가이드"에 file:line 단위로 매핑해 두었다 — 예컨대 팬아웃은
 `trunk/src/app/srs_app_source.cpp:2457`, 지터는 `:74-132`, shrink는 `:339`다. 원본에서
-낯선 것(설정 시스템, HTTP API, HLS/RTC, edge 클러스터, iovec 배칭)을 만나면 대부분
+낯선 것(설정 시스템, HTTP API, RTC/SRT, edge 클러스터, iovec 배칭)을 만나면 대부분
 "라이브 RTMP 경로의 이해에는 건너뛰어도 되는 것"이다 — 그 판별 목록도 CLAUDE.md
 §1에 있다. 좋은 여행이 되길.
 
 ---
 
 _이 글은 [srs_simple](../README.md) 프로젝트의 RTMP 이론 시리즈 Part 9다.
-코드 대조 기준: srs_simple `src/app/srs_app_source.cpp`(`SrsRtmpJitter::correct:48`,
-`SrsMessageQueue::enqueue:140`, `shrink:225`, `SrsLiveConsumer::enqueue:319`,
-`wait:381`, `SrsGopCache::cache:439`, `fetch_or_create:699`, `on_audio_imp:860`,
-`on_video_imp:912`, `on_publish:945`, `create_consumer:997`,
-`on_consumer_destroy:1043`), `src/kernel/srs_kernel_flv.{hpp,cpp}`
+코드 대조 기준: srs_simple `src/app/srs_app_source.cpp`(`SrsRtmpJitter::correct:50`,
+`SrsMessageQueue::enqueue:142`, `shrink:227`, `SrsLiveConsumer::enqueue:321`,
+`wait:383`, `SrsGopCache::cache:441`, `fetch_or_create:836`, `on_audio_imp:1029`,
+`on_video_imp:1086`, `on_publish:1124`, `create_consumer:1185`,
+`on_consumer_destroy:1230`), `src/kernel/srs_kernel_flv.{hpp,cpp}`
 (`SrsCommonMessage` hpp:124, `SrsSharedPtrMessage` hpp:178, `create:187/204`,
 `copy:286`, 소멸자:176), `src/app/srs_app_st.{hpp,cpp}`(`SrsSTCoroutine` hpp:119,
 `stop:157`, `interrupt:184`, `pull:198`), `src/app/srs_app_conn.cpp`

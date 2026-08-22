@@ -5,7 +5,8 @@
 //   - AVCC 페이로드 → NALU 샘플 목록 (annex-b 변환은 srs_kernel_ts가 한다)
 //   - AudioSpecificConfig → ADTS 헤더 생성에 필요한 object/sample_rate/channels
 // 레거시 FLV 헤더만 지원 (enhanced-RTMP/HEVC ext header 제외 — CLAUDE.md §1 비목표).
-// 원본 대비 제거: SPS 비트스트림 파싱(해상도/fps), HEVC/AV1, MP3/Opus — CLAUDE.md §5.6 S10.
+// 원본 대비 제거: SPS 비트스트림 파싱의 VUI/fps(해상도는 S16에서 복원), HEVC/AV1,
+// MP3/Opus — CLAUDE.md §5.6 S10/S16.
 #ifndef SRS_KERNEL_CODEC_HPP
 #define SRS_KERNEL_CODEC_HPP
 
@@ -159,6 +160,9 @@ class SrsAudioCodecConfig
 public:
     SrsAudioCodecId id;
 public:
+    // The raw AudioSpecificConfig bytes, for fMP4 esds box (srs_kernel_mp4 — S12).
+    std::vector<char> aac_extra_data;
+public:
     // The audio specific config fields, for ADTS header generation (srs_kernel_ts).
     SrsAacObjectType aac_object;
     // The samplingFrequencyIndex, index of srs_aac_srates.
@@ -177,6 +181,14 @@ class SrsVideoCodecConfig
 {
 public:
     SrsVideoCodecId id;
+    // The video resolution parsed from SPS (S16 — avc_demux_sps).
+    // 0이면 미파싱/파싱 실패 — fMP4 init의 tkhd/avc1이 이 값을 싣는다.
+    // (Chrome MSE는 avc1 width/height=0을 invalid decoder config로 거부한다 — §5.6 S16)
+    int width;
+    int height;
+public:
+    // The raw avcC(AVCDecoderConfigurationRecord) bytes, for fMP4 avcC box (srs_kernel_mp4 — S12).
+    std::vector<char> avc_extra_data;
 public:
     // The lengthSizeMinusOne of avcC: NALU 길이 프리픽스가 (이 값+1)바이트다.
     // 0 → 1B, 1 → 2B, 3 → 4B (2는 스펙상 금지).
@@ -265,6 +277,12 @@ public:
     SrsAudioCodecConfig* acodec;
     SrsVideoCodecConfig* vcodec;
 public:
+    // The raw payload after the FLV tag header — audio는 2바이트(AAC) 뒤의 AAC raw,
+    // video는 5바이트 뒤의 AVCC(길이 프리픽스 포함) 전체. fMP4가 mdat에 그대로 싣는다 (S12).
+    // 메시지 페이로드 내부를 가리키는 뷰일 뿐, 소유하지 않는다.
+    char* raw;
+    int nb_raw;
+public:
     SrsFormat();
     virtual ~SrsFormat();
 public:
@@ -278,6 +296,9 @@ private:
     virtual srs_error_t video_avc_demux(SrsBuffer* buffer, int64_t timestamp);
     // Parse the H.264 SPS/PPS from sequence header (avcC).
     virtual srs_error_t avc_demux_sps_pps(SrsBuffer* stream);
+    // Parse the width/height from SPS bitstream (S16 — 원본 :2237. 해상도만, VUI/fps 제거).
+    virtual srs_error_t avc_demux_sps();
+    virtual srs_error_t avc_demux_sps_rbsp(char* rbsp, int nb_rbsp);
     // Parse the NALU samples from AVCC (length-prefixed) payload.
     virtual srs_error_t avc_demux_ibmf_format(SrsBuffer* stream);
 };

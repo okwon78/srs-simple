@@ -23,6 +23,7 @@
     }
     button:hover { background: #0965cc; }
     #status { font-size: 0.85rem; opacity: 0.75; min-height: 1.2em; white-space: pre-wrap; }
+    #latency { font-size: 0.9rem; min-height: 1.2em; }
     code { background: #8882; padding: 1px 5px; border-radius: 4px; }
     .hint { font-size: 0.85rem; opacity: 0.75; line-height: 1.6; }
 </style>
@@ -36,13 +37,18 @@
 </div>
 
 <video id="video" controls muted playsinline></video>
+<p id="latency"></p>
 <p id="status"></p>
 
 <p class="hint">
     먼저 publish를 시작하세요 (첫 세그먼트가 만들어지는 ~10초 후 재생 가능):<br>
     <code>ffmpeg -re -stream_loop -1 -i test.mp4 -c copy -f flv rtmp://localhost/live/test</code><br>
     스트림 이름이 다르면 위 입력창의 경로를 <code>/&lt;app&gt;/&lt;stream&gt;.m3u8</code>로 바꾸면 된다.
-    Safari는 네이티브 HLS로, 그 외 브라우저는 hls.js(CDN)로 재생한다.
+    재생은 hls.js(CDN)로 한다 — Safari도 <code>Hls.isSupported()</code>가 참이라 이 경로를 탄다
+    (네이티브 HLS는 CDN 로드 실패 시 폴백. Safari 네이티브로 보려면 m3u8 URL을 직접 열면 된다).<br>
+    <b>라이브 전용</b>: 뒤로 감기나 일시정지 후 재개는 라이브 엣지로 스냅한다.
+    지연이 <a href="llhls.html">LL-HLS 페이지</a>보다 훨씬 큰 것이 관찰 포인트다 (~30초 vs ~2초).
+    단 LL-HLS까지 같은 publish로 보려면 GOP ≤ 2초로 재인코딩해야 한다 (<code>publish.sh</code> 참조).
 </p>
 
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
@@ -50,7 +56,9 @@
 (function () {
     var video = document.getElementById('video');
     var status = document.getElementById('status');
+    var latency = document.getElementById('latency');
     var hls = null;
+    var latencyTimer = null;
 
     function setStatus(msg) { status.textContent = msg; }
 
@@ -62,9 +70,23 @@
         return u;
     }
 
+    // 라이브 전용(DVR 비활성) 정책 — YouTube 라이브의 "뒤로 돌려보기 금지"와 동일.
+    // 뒤로 seek하거나 일시정지 후 재개하면 라이브 엣지로 스냅해 항상 최신 영상만 재생한다.
+    function snapToLive() {
+        var live = (hls && isFinite(hls.liveSyncPosition)) ? hls.liveSyncPosition
+            : (video.seekable.length ? video.seekable.end(video.seekable.length - 1) : NaN);
+        if (isFinite(live) && video.currentTime < live - 1) {
+            video.currentTime = live;
+        }
+    }
+    video.addEventListener('seeking', snapToLive);
+    video.addEventListener('play', snapToLive);
+
     function play() {
         var url = resolveUrl(document.getElementById('url').value.trim());
         if (hls) { hls.destroy(); hls = null; }
+        if (latencyTimer) { clearInterval(latencyTimer); latencyTimer = null; }
+        latency.textContent = '';
 
         if (window.Hls && Hls.isSupported()) {
             hls = new Hls({ liveDurationInfinity: true });
@@ -80,6 +102,15 @@
                         '\npublish가 진행 중인지, 첫 세그먼트(~10초)가 만들어졌는지 확인하세요.');
                 }
             });
+            // hls.latency = 라이브 엣지(플레이리스트 마지막 세그먼트의 끝)와 현재 재생 위치의 차.
+            // 10초 세그먼트 pull이라 LL-HLS 페이지(~2초)와 달리 수십 초가 나온다 — 그 대비가 관찰 포인트.
+            latencyTimer = setInterval(function () {
+                if (hls && isFinite(hls.latency)) {
+                    latency.textContent = '라이브 엣지 지연: ' + hls.latency.toFixed(2) + 's' +
+                        ' (버퍼 ' + (video.buffered.length ?
+                            (video.buffered.end(video.buffered.length - 1) - video.currentTime).toFixed(2) : '0') + 's)';
+                }
+            }, 500);
         } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
             // Safari 네이티브 HLS.
             video.src = url;

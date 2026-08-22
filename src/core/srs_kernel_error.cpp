@@ -248,6 +248,8 @@ static struct
     {ERROR_HLS_CREATE_DIR, "HlsCreateDir"},
     {ERROR_HLS_AVC_SAMPLE_SIZE, "HlsAvcFrame"},
     {ERROR_HTTP_PARSE_HEADER, "HttpParseHeader"},
+    {ERROR_MP4_ILLEGAL_MOOF, "Mp4BoxNoMoof"},
+    {ERROR_AVC_NALU_UEV, "AvcNaluUev"},
     {ERROR_CONTROL_RTMP_CLOSE, "RtmpClose"},
     {ERROR_CONTROL_REPUBLISH, "RtmpRepublish"},
     {ERROR_USER_DISCONNECT, "UserDisconnect"},

@@ -11,7 +11,7 @@
 #include <srs_kernel_error.hpp>
 #include <srs_kernel_log.hpp>
 
-srs_error_t do_main(int argc, char** argv)
+srs_error_t do_main(int argc, char **argv)
 {
     srs_error_t err = srs_success;
 
@@ -21,21 +21,25 @@ srs_error_t do_main(int argc, char** argv)
 
     srs_trace("%s started, pid=%d", RTMP_SIG_SRS_SERVER, (int)::getpid());
 
-    SrsServer* server = new SrsServer();
+    SrsServer *server = new SrsServer();
 
-    if ((err = server->initialize()) != srs_success) {
+    if ((err = server->initialize()) != srs_success)
+    {
         return srs_error_wrap(err, "server initialize");
     }
 
-    if ((err = server->listen()) != srs_success) {
+    if ((err = server->listen()) != srs_success)
+    {
         return srs_error_wrap(err, "server listen");
     }
 
-    srs_trace("SRS_SIMPLE ready, rtmp://127.0.0.1:%d/live/livestream", _srs_config->listen_port);
-    srs_trace("HLS ready, http://127.0.0.1:%d/live/livestream.m3u8", _srs_config->http_listen_port);
+    srs_trace("SRS_SIMPLE ready, rtmp://127.0.0.1:%d/live/livestream", _srs_config->rtmp_listen_port);
+    // HLS 파일(m3u8/ts)의 HTTP 서빙은 외부 nginx가 담당한다 (conf/nginx.conf, CLAUDE.md §5.6 S11).
+    srs_trace("HLS ready, %s/live/livestream.m3u8 (serve with nginx: conf/nginx.conf)", _srs_config->hls_path.c_str());
 
     // 워커 스레드들이 서비스하는 동안 메인 스레드는 대기 (Ctrl+C로 종료).
-    while (true) {
+    while (true)
+    {
         ::pause();
     }
 
@@ -43,11 +47,12 @@ srs_error_t do_main(int argc, char** argv)
     return err;
 }
 
-int main(int argc, char** argv)
+int main(int argc, char **argv)
 {
     srs_error_t err = do_main(argc, argv);
 
-    if (err != srs_success) {
+    if (err != srs_success)
+    {
         srs_error("Failed, %s", srs_error_desc(err).c_str());
         int ret = srs_error_code(err);
         srs_freep(err);

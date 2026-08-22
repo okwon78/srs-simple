@@ -13,7 +13,7 @@
 struct SrsSimpleConfig
 {
     // The port to listen (원본: listen)
-    int listen_port = 1935;
+    int rtmp_listen_port = 1935;
     // The outbound chunk size (원본: chunk_size). connect의 _result보다 먼저 송신 — 이슈 #454.
     int chunk_size = 60000;
     // The outbound WindowAckSize (원본: out_ack_size)
@@ -49,15 +49,23 @@ struct SrsSimpleConfig
     std::string hls_m3u8_file = "[app]/[stream].m3u8";
     std::string hls_ts_file = "[app]/[stream]-[seq].ts";
 
-    // ---- S10 HTTP 정적 서버 (원본: http_server.enabled/listen/dir) ----
-    // HLS 파일(.m3u8/.ts)을 hls_path에서 서빙한다.
-    int http_listen_port = 8080;
-    // 정적 페이지 루트 — "/"가 이 디렉터리의 index.html(HLS 플레이어)로 이어진다.
-    // hls_path에 없는 경로는 여기서 한 번 더 찾는다 (원본 http_server.dir의 축소판).
-    std::string http_dir = "./www";
+    // NOTE: hls_path의 m3u8/ts와 플레이어 페이지(www/hls.html)의 HTTP 서빙은
+    // 외부 nginx가 담당한다 — conf/nginx.conf 참조 (CLAUDE.md §5.6 S11).
+
+    // ---- S13 LL-HLS (원본 SRS에 대응물 없음 — PLANS.md D5, OME/llhls-streaming 참조) ----
+    // Whether enable LL-HLS (fMP4 파트 + 인메모리 + 블로킹 서빙).
+    bool llhls_enabled = true;
+    // The duration of one segment (EXTINF). 전제: 인코더 GOP ≤ 이 값 — README 참조.
+    srs_utime_t llhls_segment = 2 * SRS_UTIME_SECONDS;
+    // The target duration of one part (EXT-X-PARTINF의 PART-TARGET).
+    srs_utime_t llhls_part = 500 * SRS_UTIME_MILLISECONDS;
+    // The rolling window, in segments (= 20초). 파트는 부모 세그먼트와 함께 만료된다.
+    int llhls_segment_count = 10;
+    // The port of builtin HTTP server for LL-HLS (S15 — nginx 8080과 분리).
+    int llhls_http_port = 8081;
 };
 
 // @global The config object (원본의 _srs_config 전역과 동일한 이름).
-extern SrsSimpleConfig* _srs_config;
+extern SrsSimpleConfig *_srs_config;
 
 #endif

@@ -12,6 +12,7 @@
 
 #include <srs_app_config.hpp>
 #include <srs_app_hls.hpp>
+#include <srs_app_llhls.hpp>
 #include <srs_kernel_codec.hpp>
 #include <srs_kernel_error.hpp>
 #include <srs_kernel_flv.hpp>
@@ -687,10 +688,12 @@ SrsOriginHub::SrsOriginHub()
 
     format = new SrsFormat();
     hls = new SrsHls();
+    llhls = new SrsLlHls();
 }
 
 SrsOriginHub::~SrsOriginHub()
 {
+    srs_freep(llhls);
     srs_freep(hls);
     srs_freep(format);
 }
@@ -710,12 +713,21 @@ srs_error_t SrsOriginHub::initialize(SrsLiveSource* s, SrsRequest* r)
         return srs_error_wrap(err, "hls initialize");
     }
 
+    if ((err = llhls->initialize(this, req_)) != srs_success) {
+        return srs_error_wrap(err, "llhls initialize");
+    }
+
     return err;
 }
 
 bool SrsOriginHub::active()
 {
     return is_active;
+}
+
+SrsLlHlsStorage* SrsOriginHub::llhls_storage()
+{
+    return llhls->storage();
 }
 
 srs_error_t SrsOriginHub::on_audio(SrsSharedPtrMessage* shared_audio)
@@ -736,6 +748,13 @@ srs_error_t SrsOriginHub::on_audio(SrsSharedPtrMessage* shared_audio)
     if ((err = hls->on_audio(msg, format)) != srs_success) {
         srs_warn("hls: ignore audio error %s", srs_error_desc(err).c_str());
         hls->on_unpublish();
+        srs_error_reset(err);
+    }
+
+    // LL-HLS도 같은 오류 전략 (S13).
+    if ((err = llhls->on_audio(msg, format)) != srs_success) {
+        srs_warn("llhls: ignore audio error %s", srs_error_desc(err).c_str());
+        llhls->on_unpublish();
         srs_error_reset(err);
     }
 
@@ -761,6 +780,13 @@ srs_error_t SrsOriginHub::on_video(SrsSharedPtrMessage* shared_video, bool is_se
         srs_error_reset(err);
     }
 
+    // LL-HLS도 같은 오류 전략 (S13).
+    if ((err = llhls->on_video(msg, format)) != srs_success) {
+        srs_warn("llhls: ignore video error %s", srs_error_desc(err).c_str());
+        llhls->on_unpublish();
+        srs_error_reset(err);
+    }
+
     return err;
 }
 
@@ -770,6 +796,10 @@ srs_error_t SrsOriginHub::on_publish()
 
     if ((err = hls->on_publish()) != srs_success) {
         return srs_error_wrap(err, "hls publish");
+    }
+
+    if ((err = llhls->on_publish()) != srs_success) {
+        return srs_error_wrap(err, "llhls publish");
     }
 
     is_active = true;
@@ -782,6 +812,7 @@ void SrsOriginHub::on_unpublish()
     is_active = false;
 
     hls->on_unpublish();
+    llhls->on_unpublish();
 }
 
 // 원본은 main에서 생성/대입하지만, _srs_config와 같은 정적 초기화 이디엄을 쓴다.
@@ -843,6 +874,25 @@ SrsLiveSource* SrsLiveSourceManager::fetch(SrsRequest* r)
     }
 
     return it->second;
+}
+
+SrsLiveSource* SrsLiveSourceManager::fetch(string app, string stream)
+{
+    std::lock_guard<std::mutex> guard(lock);
+
+    // 키는 "vhost/app/stream"(기본 vhost면 "/app/stream") — vhost를 무시하고
+    // "/app/stream" 접미사로 찾는다. 접미사가 '/'로 시작하므로 부분 일치 오탐 없음.
+    string suffix = "/" + app + "/" + stream;
+    std::map<std::string, SrsLiveSource*>::iterator it;
+    for (it = pool.begin(); it != pool.end(); ++it) {
+        const string& url = it->first;
+        if (url.length() >= suffix.length()
+            && url.compare(url.length() - suffix.length(), suffix.length(), suffix) == 0) {
+            return it->second;
+        }
+    }
+
+    return NULL;
 }
 
 SrsLiveSource::SrsLiveSource()
@@ -925,6 +975,12 @@ bool SrsLiveSource::can_publish()
 {
     std::lock_guard<std::mutex> guard(lock_);
     return can_publish_;
+}
+
+SrsLlHlsStorage* SrsLiveSource::llhls_storage()
+{
+    // hub 포인터는 생성자에서 만들어져 불변 — source lock_ 불필요 (hpp 주석 참조).
+    return hub->llhls_storage();
 }
 
 srs_error_t SrsLiveSource::on_meta_data(SrsCommonMessage* msg, SrsOnMetaDataPacket* metadata)

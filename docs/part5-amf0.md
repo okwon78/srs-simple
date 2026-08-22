@@ -16,6 +16,8 @@
 > 7. [커맨드 흐름 (2) — publish와 미디어 메시지](part7-publish.md)
 > 8. [커맨드 흐름 (3) — play와 중간 입장 문제](part8-play.md)
 > 9. [(보너스) 서버 내부 — 팬아웃, 캐시, 지터](part9-server-internals.md)
+> 10. [(보너스 2) HLS — 같은 스트림을 HTTP로 배달하기](part10-hls.md)
+> 11. [(보너스 3) LL-HLS — 지연과의 싸움: 파트, 블로킹 리로드, fMP4](part11-llhls.md)
 
 이 글은 Part 4까지 읽었다고 가정한다. 다만 이 파트는 다른 파트와 의존이 얕다 —
 청크 층(Part 3)이 "type 20 메시지의 페이로드"라는 바이트 덩어리를 건네준다는 것만
@@ -43,7 +45,7 @@ srs_simple의 구현은 [srs_protocol_amf0.{hpp,cpp}](../src/protocol/srs_protoc
 
 먼저 좌표부터. Part 3의 `recv_message`가 완성된 메시지를 돌려주면, 헤더의 type이
 20(AMF0 command) 또는 18(AMF0 data)인 경우 `do_decode_message`
-([srs_protocol_rtmp_stack.cpp:368](../src/protocol/srs_protocol_rtmp_stack.cpp#L368))가
+([srs_protocol_rtmp_stack.cpp:390](../src/protocol/srs_protocol_rtmp_stack.cpp#L390))가
 페이로드를 AMF0로 해석하기 시작한다:
 
 ```mermaid
@@ -164,7 +166,7 @@ EcmaArray  ┌──────┬──────────┬────
 EcmaArray로 온다.** 서버가 Object만 받겠다고 하면 ffmpeg publish의 메타데이터를
 못 읽는다. 그래서 `SrsOnMetaDataPacket::decode`는 둘 다 받고, EcmaArray면 Object로
 복사해 통일한다
-([srs_protocol_rtmp_stack.cpp:3081-3094](../src/protocol/srs_protocol_rtmp_stack.cpp#L3081-L3094)):
+([srs_protocol_rtmp_stack.cpp:3418-3434](../src/protocol/srs_protocol_rtmp_stack.cpp#L3418-L3434)):
 
 ```cpp
 if (any->is_object()) {
@@ -183,7 +185,7 @@ if (any->is_ecma_array()) {
 
 반대 방향도 있다 — 서버가 connect `_result`에 서버 정보를 담을 때는 관례상
 EcmaArray를 만들어 보낸다
-([response_connect_app, rtmp_stack.cpp:1740](../src/protocol/srs_protocol_rtmp_stack.cpp#L1740)).
+([response_connect_app, rtmp_stack.cpp:1924](../src/protocol/srs_protocol_rtmp_stack.cpp#L1924)).
 그래서 srs_simple의 `SrsAmf0EcmaArray`는 "서버는 읽기만 필요"함에도 원본대로
 write까지 유지한다 ([hpp:166](../src/protocol/srs_protocol_amf0.hpp#L166) 주석).
 
@@ -441,7 +443,7 @@ _이 글은 [srs_simple](../README.md) 프로젝트의 RTMP 이론 시리즈 Par
 (`SrsAmf0Any::discovery:182`, `SrsAmf0Object::read:476`/`write:520`,
 `SrsAmf0EcmaArray::read:640`, `SrsUnSortedHashtable` hpp:377,
 `srs_amf0_read_utf8:1206`, `srs_amf0_is_object_eof:1256`),
-`src/protocol/srs_protocol_rtmp_stack.cpp`(`SrsOnMetaDataPacket::decode:3054`) /
+`src/protocol/srs_protocol_rtmp_stack.cpp`(`SrsOnMetaDataPacket::decode:3386`) /
 원본 SRS 6.0 `trunk/src/protocol/srs_protocol_amf0.cpp:672`(Object::read),
 `:716`(Object::write), 순서 보존 주석은 hpp:778. 실측 바이트:
 `utest/srs_utest_amf0.cpp`의 `FfmpegConnectDecode`, `EcmaArrayToObject`,

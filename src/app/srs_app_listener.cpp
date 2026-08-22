@@ -26,7 +26,8 @@ srs_error_t srs_fd_closeexec(int fd)
 {
     int flags = fcntl(fd, F_GETFD);
     flags |= FD_CLOEXEC;
-    if (fcntl(fd, F_SETFD, flags) == -1) {
+    if (fcntl(fd, F_SETFD, flags) == -1)
+    {
         return srs_error_new(ERROR_SOCKET_CREATE, "closeexec fd=%d", fd);
     }
 
@@ -36,28 +37,32 @@ srs_error_t srs_fd_closeexec(int fd)
 srs_error_t srs_fd_reuseaddr(int fd)
 {
     int v = 1;
-    if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &v, sizeof(int)) == -1) {
+    if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &v, sizeof(int)) == -1)
+    {
         return srs_error_new(ERROR_SOCKET_SETREUSE, "reuseaddr fd=%d", fd);
     }
 
     return srs_success;
 }
 
-srs_error_t srs_tcp_listen(string ip, int port, srs_netfd_t* pfd)
+srs_error_t srs_tcp_listen(string ip, int port, srs_netfd_t *pfd)
 {
     srs_error_t err = srs_success;
 
     int fd = ::socket(AF_INET, SOCK_STREAM, 0);
-    if (fd == -1) {
+    if (fd == -1)
+    {
         return srs_error_new(ERROR_SOCKET_CREATE, "socket");
     }
 
-    if ((err = srs_fd_closeexec(fd)) != srs_success) {
+    if ((err = srs_fd_closeexec(fd)) != srs_success)
+    {
         ::close(fd);
         return srs_error_wrap(err, "set closeexec");
     }
 
-    if ((err = srs_fd_reuseaddr(fd)) != srs_success) {
+    if ((err = srs_fd_reuseaddr(fd)) != srs_success)
+    {
         ::close(fd);
         return srs_error_wrap(err, "set reuseaddr");
     }
@@ -66,17 +71,20 @@ srs_error_t srs_tcp_listen(string ip, int port, srs_netfd_t* pfd)
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
     addr.sin_port = htons(port);
-    if (inet_pton(AF_INET, ip.c_str(), &addr.sin_addr) != 1) {
+    if (inet_pton(AF_INET, ip.c_str(), &addr.sin_addr) != 1)
+    {
         ::close(fd);
         return srs_error_new(ERROR_SOCKET_BIND, "invalid ip=%s", ip.c_str());
     }
 
-    if (::bind(fd, (sockaddr*)&addr, sizeof(addr)) == -1) {
+    if (::bind(fd, (sockaddr *)&addr, sizeof(addr)) == -1)
+    {
         ::close(fd);
         return srs_error_new(ERROR_SOCKET_BIND, "bind %s:%d", ip.c_str(), port);
     }
 
-    if (::listen(fd, 512) == -1) {
+    if (::listen(fd, 512) == -1)
+    {
         ::close(fd);
         return srs_error_new(ERROR_SOCKET_LISTEN, "listen %s:%d", ip.c_str(), port);
     }
@@ -102,7 +110,7 @@ ISrsTcpHandler::~ISrsTcpHandler()
 {
 }
 
-SrsTcpListener::SrsTcpListener(ISrsTcpHandler* h)
+SrsTcpListener::SrsTcpListener(ISrsTcpHandler *h)
 {
     handler = h;
     port_ = 0;
@@ -117,13 +125,13 @@ SrsTcpListener::~SrsTcpListener()
     srs_freep(trd);
 }
 
-SrsTcpListener* SrsTcpListener::set_label(const std::string& label)
+SrsTcpListener *SrsTcpListener::set_label(const std::string &label)
 {
     label_ = label;
     return this;
 }
 
-SrsTcpListener* SrsTcpListener::set_endpoint(const std::string& i, int p)
+SrsTcpListener *SrsTcpListener::set_endpoint(const std::string &i, int p)
 {
     ip = i;
     port_ = p;
@@ -140,16 +148,19 @@ srs_error_t SrsTcpListener::listen()
     srs_error_t err = srs_success;
 
     // Ignore if not configured.
-    if (ip.empty()) return err;
+    if (ip.empty())
+        return err;
 
     srs_close_stfd(lfd);
-    if ((err = srs_tcp_listen(ip, port_, &lfd)) != srs_success) {
+    if ((err = srs_tcp_listen(ip, port_, &lfd)) != srs_success)
+    {
         return srs_error_wrap(err, "listen at %s:%d", ip.c_str(), port_);
     }
 
     srs_freep(trd);
     trd = new SrsSTCoroutine("tcp", this);
-    if ((err = trd->start()) != srs_success) {
+    if ((err = trd->start()) != srs_success)
+    {
         return srs_error_wrap(err, "start coroutine");
     }
 
@@ -170,12 +181,16 @@ srs_error_t SrsTcpListener::cycle()
 {
     srs_error_t err = srs_success;
 
-    while (true) {
-        if ((err = trd->pull()) != srs_success) {
+    while (true)
+    {
+        // Checks whether an error occurred.
+        if ((err = trd->pull()) != srs_success)
+        {
             return srs_error_wrap(err, "tcp listener");
         }
 
-        if ((err = do_cycle()) != srs_success) {
+        if ((err = do_cycle()) != srs_success)
+        {
             srs_warn("%s listener: Ignore error, %s", label_.c_str(), srs_error_desc(err).c_str());
             srs_freep(err);
         }
@@ -196,30 +211,37 @@ srs_error_t SrsTcpListener::do_cycle()
     pfd.revents = 0;
 
     int r0 = ::poll(&pfd, 1, SRS_TCP_ACCEPT_TIMEOUT_MS);
-    if (r0 == 0) {
+    if (r0 == 0)
+    {
         return err;
     }
-    if (r0 < 0) {
-        if (errno == EINTR) {
+    if (r0 < 0)
+    {
+        if (errno == EINTR)
+        {
             return err;
         }
         return srs_error_new(ERROR_SOCKET_ACCEPT, "poll at fd=%d", srs_netfd_fileno(lfd));
     }
 
     srs_netfd_t fd = ::accept(lfd, NULL, NULL);
-    if (fd == SRS_NETFD_INVALID) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+    if (fd == SRS_NETFD_INVALID)
+    {
+        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
+        {
             return err;
         }
         return srs_error_new(ERROR_SOCKET_ACCEPT, "accept at fd=%d", srs_netfd_fileno(lfd));
     }
 
-    if ((err = srs_fd_closeexec(fd)) != srs_success) {
+    if ((err = srs_fd_closeexec(fd)) != srs_success)
+    {
         srs_close_stfd(fd);
         return srs_error_wrap(err, "set closeexec");
     }
 
-    if ((err = handler->on_tcp_client(this, fd)) != srs_success) {
+    if ((err = handler->on_tcp_client(this, fd)) != srs_success)
+    {
         return srs_error_wrap(err, "handle fd=%d", srs_netfd_fileno(fd));
     }
 

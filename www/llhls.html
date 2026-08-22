@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>srs_simple LL-HLS player</title>
+<style>
+    :root { color-scheme: light dark; }
+    body {
+        font-family: -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+        max-width: 720px; margin: 40px auto; padding: 0 16px;
+    }
+    h1 { font-size: 1.3rem; }
+    video { width: 100%; background: #000; border-radius: 8px; }
+    .row { display: flex; gap: 8px; margin: 12px 0; }
+    input {
+        flex: 1; padding: 8px 10px; font-size: 0.95rem;
+        border: 1px solid #8884; border-radius: 6px; background: transparent; color: inherit;
+    }
+    button {
+        padding: 8px 18px; font-size: 0.95rem; border: 0; border-radius: 6px;
+        background: #0a7cff; color: #fff; cursor: pointer;
+    }
+    button:hover { background: #0965cc; }
+    #status { font-size: 0.85rem; opacity: 0.75; min-height: 1.2em; white-space: pre-wrap; }
+    #latency { font-size: 0.9rem; min-height: 1.2em; }
+    code { background: #8882; padding: 1px 5px; border-radius: 4px; }
+    .hint { font-size: 0.85rem; opacity: 0.75; line-height: 1.6; }
+</style>
+</head>
+<body>
+<h1>srs_simple — LL-HLS 플레이어 (low-latency)</h1>
+
+<div class="row">
+    <input id="url" value="http://127.0.0.1:8081/live/test.m3u8" spellcheck="false">
+    <button id="play">재생</button>
+</div>
+
+<video id="video" controls muted playsinline></video>
+<p id="latency"></p>
+<p id="status"></p>
+
+<p class="hint">
+    먼저 publish를 시작하세요. <b>LL-HLS는 세그먼트를 키프레임에서 자르므로 GOP ≤ 2초</b>가
+    필요하다 (<code>-c copy</code>는 원본 GOP를 그대로 쓰므로 재인코딩 권장):<br>
+    <code>ffmpeg -re -stream_loop -1 -i test.mp4 -c:v libx264 -g 60 -keyint_min 60 -bf 0
+    -c:a aac -f flv rtmp://localhost/live/test</code><br>
+    m3u8는 내장 HTTP 서버(:8081)가 직접 서빙한다 — 블로킹 리로드(<code>_HLS_msn</code>)와
+    프리로드 힌트 홀드는 정적 파일 서버(nginx)가 못 하는 일이라 오리진이 처리한다.
+    같은 publish를 <a href="hls.html">기존 HLS 페이지(10초 세그먼트, ~30초 지연)</a>와
+    나란히 재생하면 지연 차이를 볼 수 있다. 재생은 hls.js(<code>lowLatencyMode</code>)로 한다 —
+    Safari도 <code>Hls.isSupported()</code>가 참이라 이 경로를 탄다 (네이티브 LL-HLS는 CDN 로드
+    실패 시 폴백이며, 현재 서버에서는 거부된다 — CLAUDE.md §8 S17).<br>
+    <b>라이브 전용</b>: 뒤로 감기나 일시정지 후 재개는 라이브 엣지로 스냅한다.
+</p>
+
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
+<script>
+(function () {
+    var video = document.getElementById('video');
+    var status = document.getElementById('status');
+    var latency = document.getElementById('latency');
+    var hls = null;
+    var latencyTimer = null;
+
+    function setStatus(msg) { status.textContent = msg; }
+
+    // 라이브 전용(DVR 비활성) 정책 — YouTube 라이브의 "뒤로 돌려보기 금지"와 동일.
+    // 뒤로 seek하거나 일시정지 후 재개하면 라이브 엣지로 스냅해 항상 최신 영상만 재생한다.
+    function snapToLive() {
+        var live = (hls && isFinite(hls.liveSyncPosition)) ? hls.liveSyncPosition
+            : (video.seekable.length ? video.seekable.end(video.seekable.length - 1) : NaN);
+        if (isFinite(live) && video.currentTime < live - 1) {
+            video.currentTime = live;
+        }
+    }
+    video.addEventListener('seeking', snapToLive);
+    video.addEventListener('play', snapToLive);
+
+    function play() {
+        var url = document.getElementById('url').value.trim();
+        if (hls) { hls.destroy(); hls = null; }
+        if (latencyTimer) { clearInterval(latencyTimer); latencyTimer = null; }
+        latency.textContent = '';
+
+        if (window.Hls && Hls.isSupported()) {
+            // lowLatencyMode가 켜지면 hls.js는 EXT-X-PART를 파트 단위로 로드하고
+            // _HLS_msn/_HLS_part 블로킹 리로드로 플레이리스트를 폴링 없이 갱신한다
+            // (개발자 도구 네트워크 탭에서 관찰 가능).
+            hls = new Hls({ lowLatencyMode: true, liveDurationInfinity: true });
+            hls.loadSource(url);
+            hls.attachMedia(video);
+            hls.on(Hls.Events.MANIFEST_PARSED, function () {
+                setStatus('m3u8 로드 완료 — 재생 시작: ' + url);
+                video.play();
+            });
+            hls.on(Hls.Events.ERROR, function (_e, data) {
+                if (data.fatal) {
+                    setStatus('오류: ' + data.type + ' / ' + data.details +
+                        '\npublish가 진행 중인지, GOP가 2초 이하인지 확인하세요.');
+                }
+            });
+            // hls.latency = 라이브 엣지(마지막 파트의 끝)와 현재 재생 위치의 차.
+            latencyTimer = setInterval(function () {
+                if (hls && isFinite(hls.latency)) {
+                    latency.textContent = '라이브 엣지 지연: ' + hls.latency.toFixed(2) + 's' +
+                        ' (버퍼 ' + (video.buffered.length ?
+                            (video.buffered.end(video.buffered.length - 1) - video.currentTime).toFixed(2) : '0') + 's)';
+                }
+            }, 500);
+        } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+            // Safari 네이티브 LL-HLS.
+            video.src = url;
+            video.play();
+            setStatus('네이티브 LL-HLS로 재생: ' + url);
+        } else {
+            setStatus('이 브라우저는 HLS를 지원하지 않고 hls.js도 로드하지 못했습니다 (인터넷 연결 필요).');
+        }
+    }
+
+    document.getElementById('play').addEventListener('click', play);
+    document.getElementById('url').addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') play();
+    });
+})();
+</script>
+</body>
+</html>

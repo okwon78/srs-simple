@@ -3,7 +3,7 @@
 //             → stream_service_cycle(식별→publish/play 분기).
 // 원본 대비 제거: edge/refer/security/bandwidth/http_hooks/statistic/APM, 수신 전용
 // 코루틴(SrsQueueRecvThread/SrsPublishRecvThread — 연결당 1스레드로 직접 recv, CLAUDE.md §5.1),
-// reload 핸들러, ISrsExpire — CLAUDE.md §5.6 "S7 부수 단순화".
+// reload 핸들러, ISrsExpire — CLAUDE.md §5.6 S7.
 #ifndef SRS_APP_RTMP_CONN_HPP
 #define SRS_APP_RTMP_CONN_HPP
 

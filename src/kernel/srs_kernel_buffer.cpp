@@ -256,3 +256,33 @@ void SrsBuffer::write_bytes(char* data, int size)
     memcpy(p, data, size);
     p += size;
 }
+
+SrsBitBuffer::SrsBitBuffer(SrsBuffer* b)
+{
+    cb = 0;
+    cb_left = 0;
+    stream = b;
+}
+
+SrsBitBuffer::~SrsBitBuffer()
+{
+}
+
+bool SrsBitBuffer::empty() {
+    if (cb_left) {
+        return false;
+    }
+    return stream->empty();
+}
+
+int8_t SrsBitBuffer::read_bit() {
+    if (!cb_left) {
+        srs_assert(!stream->empty());
+        cb = stream->read_1bytes();
+        cb_left = 8;
+    }
+
+    int8_t v = (cb >> (cb_left - 1)) & 0x01;
+    cb_left--;
+    return v;
+}

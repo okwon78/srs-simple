@@ -16,6 +16,8 @@
 > 7. [커맨드 흐름 (2) — publish와 미디어 메시지](part7-publish.md)
 > 8. [커맨드 흐름 (3) — play와 중간 입장 문제](part8-play.md)
 > 9. [(보너스) 서버 내부 — 팬아웃, 캐시, 지터](part9-server-internals.md)
+> 10. [(보너스 2) HLS — 같은 스트림을 HTTP로 배달하기](part10-hls.md)
+> 11. [(보너스 3) LL-HLS — 지연과의 싸움: 파트, 블로킹 리로드, fMP4](part11-llhls.md)
 
 이 글은 Part 3까지 읽었다고 가정한다. Part 3에서 청크 층이 완성됐다 — `recv_message`가
 완성된 메시지를 돌려주고, 위층은 청크를 볼 일이 없다. 그런데 그 층을 통과해 올라오는
@@ -28,7 +30,7 @@
 아니라 프로토콜 스택이 자동으로 처리**한다. srs_simple이 구현한 것은 5종 —
 SetChunkSize(1), Acknowledgement(3), UserControl(4), WindowAckSize(5),
 SetPeerBandwidth(6)이고, 각각 `SrsPacket` 서브클래스 하나씩이다
-([srs_protocol_rtmp_stack.hpp:882-1087](../src/protocol/srs_protocol_rtmp_stack.hpp#L882-L1087)).
+([srs_protocol_rtmp_stack.hpp:932-1150](../src/protocol/srs_protocol_rtmp_stack.hpp#L932-L1150)).
 
 이 파트의 또 다른 주제는 **타이밍**이다. 컨트롤 메시지는 내용보다 "언제 보내는가"가
 어렵다 — SetChunkSize가 connect 응답보다 먼저 나가야 하는 이유(OBS 이슈 #454)가
@@ -61,7 +63,7 @@ message type 1~6 전체를 놓고 보면 srs_simple의 구현 범위가 그려�
 
 "자동 처리"의 정체는 `recv_message`의 마지막 단계다. Part 3에서 본 수신 루프는 메시지가
 완성되면 위로 돌려주기 **직전에** `on_recv_message`를 거친다
-([srs_protocol_rtmp_stack.cpp:238](../src/protocol/srs_protocol_rtmp_stack.cpp#L238)):
+([srs_protocol_rtmp_stack.cpp:249](../src/protocol/srs_protocol_rtmp_stack.cpp#L249)):
 
 ```cpp
 if ((err = on_recv_message(msg)) != srs_success) { ... }   // 프로토콜 상태에 반영
@@ -69,7 +71,7 @@ if ((err = on_recv_message(msg)) != srs_success) { ... }   // 프로토콜 상�
 ```
 
 `on_recv_message`
-([srs_protocol_rtmp_stack.cpp:981-1066](../src/protocol/srs_protocol_rtmp_stack.cpp#L981-L1066),
+([srs_protocol_rtmp_stack.cpp:1096-1194](../src/protocol/srs_protocol_rtmp_stack.cpp#L1096-L1194),
 원본 `protocol/srs_protocol_rtmp_stack.cpp:1230`)는 type을 보고 SetChunkSize /
 UserControl / WindowAckSize **3종만** 디코드해 내부 상태(`in_chunk_size`,
 `in_ack_size.window`, `in_buffer_length`)에 반영한다. Acknowledgement(3)와
@@ -78,7 +80,7 @@ SetPeerBandwidth(6)는 switch의 default로 떨어져 **그냥 무시**된다 �
 
 주의할 점: 반영이 끝나도 메시지 자체는 위층으로 **올라간다**. 앱 층의 루프들은 컨트롤
 메시지를 받으면 버릴 뿐이다 — `identify_client`가 좋은 예다
-([srs_protocol_rtmp_stack.cpp:1775-1778](../src/protocol/srs_protocol_rtmp_stack.cpp#L1775-L1778)):
+([srs_protocol_rtmp_stack.cpp:1963-1967](../src/protocol/srs_protocol_rtmp_stack.cpp#L1963-L1967)):
 
 ```cpp
 if (h.is_ackledgement() || h.is_set_chunk_size() || h.is_window_ackledgement_size()
@@ -110,13 +112,13 @@ SetChunkSize (type 1) — payload 4B
 핵심 개념은 **방향별 독립**이다. 청크 크기는 "보내는 쪽이 자기 송신 방향에 대해
 선언"한다. 서버는 60000으로 보내겠다고 선언하면서, OBS가 선언한 4096으로 받는다. 두 값은
 협상되지 않고 서로를 모른다. 코드에도 두 변수가 따로 있다
-([srs_protocol_rtmp_stack.hpp:162](../src/protocol/srs_protocol_rtmp_stack.hpp#L162),
-[:187](../src/protocol/srs_protocol_rtmp_stack.hpp#L187)):
+([srs_protocol_rtmp_stack.hpp:165](../src/protocol/srs_protocol_rtmp_stack.hpp#L165),
+[:190](../src/protocol/srs_protocol_rtmp_stack.hpp#L190)):
 
 - `in_chunk_size` — 상대의 SetChunkSize를 받으면 갱신
-  ([on_recv_message:1024-1044](../src/protocol/srs_protocol_rtmp_stack.cpp#L1024-L1044))
+  ([on_recv_message:1145-1168](../src/protocol/srs_protocol_rtmp_stack.cpp#L1145-L1168))
 - `out_chunk_size` — 내가 SetChunkSize를 보내면 갱신
-  ([on_send_packet:1077-1082](../src/protocol/srs_protocol_rtmp_stack.cpp#L1077-L1082)
+  ([on_send_packet:1208-1213](../src/protocol/srs_protocol_rtmp_stack.cpp#L1208-L1213)
   — 자기가 보낸 패킷을 자기 상태에 반영하는 대칭 후킹)
 
 수신 반영 쪽에는 현실 세계의 흉터가 두 개 남아 있다. 스펙상 최대값은 65536인데 이를
@@ -178,7 +180,7 @@ TCP가 이미 ACK를 해 주는데 왜 응용 계층에 또 있을까? RTMP가 �
 WindowAckSize를 보내는데, 서버가 ACK를 안 보내 주면 일부 인코더는 미전송 바이트가
 윈도우를 넘는 순간 **송신을 멈추고 블록**한다. 즉 서버 입장에서 이 메시지의 처리는
 선택이 아니라 publish가 몇 초 만에 얼어붙느냐의 문제다. 헤더 주석에도 이 사연이 적혀
-있다 ([srs_protocol_rtmp_stack.hpp:204-210](../src/protocol/srs_protocol_rtmp_stack.hpp#L204-L210)).
+있다 ([srs_protocol_rtmp_stack.hpp:210-216](../src/protocol/srs_protocol_rtmp_stack.hpp#L210-L216)).
 
 흐름 전체는 이렇다:
 
@@ -199,7 +201,7 @@ sequenceDiagram
 ```
 
 자동 송신 로직이 `response_acknowledgement_message`
-([srs_protocol_rtmp_stack.cpp:1125-1156](../src/protocol/srs_protocol_rtmp_stack.cpp#L1125-L1156),
+([srs_protocol_rtmp_stack.cpp:1264-1299](../src/protocol/srs_protocol_rtmp_stack.cpp#L1264-L1299),
 원본 :1370)다. `on_recv_message`가 **모든 메시지 수신마다** 제일 먼저 이 함수를 부른다:
 
 ```cpp
@@ -217,16 +219,16 @@ if (delta < in_ack_size.window / 2) {
    미리 보내 여유를 확보하는 방어적 선택이다
 2. **랩어라운드 처리**: sequence number는 4바이트라 4GB에서 넘친다. 장시간 방송이면
    실제로 도달하는 값이다. `0xf0000000`을 넘으면 delta부터 다시 시작한다
-   ([:1141-1144](../src/protocol/srs_protocol_rtmp_stack.cpp#L1141-L1144)) — 정확히 0을
+   ([:1283-1286](../src/protocol/srs_protocol_rtmp_stack.cpp#L1283-L1286)) — 정확히 0을
    넘길 때까지 기다리지 않고 여유를 두고 미리 리셋하는, 역시 방어적 관용
 3. **window=0이면 침묵**: 상대가 WindowAckSize를 보낸 적이 없으면 ACK도 없다
-   ([:1129-1131](../src/protocol/srs_protocol_rtmp_stack.cpp#L1129-L1131))
+   ([:1268-1271](../src/protocol/srs_protocol_rtmp_stack.cpp#L1268-L1271))
 
 수신 반영은 `in_ack_size.window`에 저장하는 한 줄이다
-([:1012-1023](../src/protocol/srs_protocol_rtmp_stack.cpp#L1012-L1023)). 반대 방향 —
+([:1131-1144](../src/protocol/srs_protocol_rtmp_stack.cpp#L1131-L1144)). 반대 방향 —
 서버도 `service_cycle` 부트스트랩에서 WindowAckSize(2500000)를 보내고, 그 값이
 `out_ack_size.window`에 기록된다
-([on_send_packet:1083-1086](../src/protocol/srs_protocol_rtmp_stack.cpp#L1083-L1086)).
+([on_send_packet:1214-1219](../src/protocol/srs_protocol_rtmp_stack.cpp#L1214-L1219)).
 그런데 이 `out_ack_size`를 **검사하는 코드는 어디에도 없다.** 클라이언트가 ACK를 보내오면
 type 3은 default로 무시된다. 즉 서버가 보내는 WindowAckSize는 사실상 의례적인 인사다 —
 스펙이 시키니 보내지만, 클라이언트가 ACK를 안 해도 서버는 전혀 개의치 않는다. 프로토콜
@@ -234,7 +236,7 @@ type 3은 default로 무시된다. 즉 서버가 보내는 WindowAckSize는 사�
 실질**인 비대칭이라는 것, 이것이 코드를 읽어야 보이는 현실이다.
 
 부속 메서드 하나: `set_in_window_ack_size`
-([srs_protocol_rtmp_stack.cpp:206-209](../src/protocol/srs_protocol_rtmp_stack.cpp#L206-L209))는
+([srs_protocol_rtmp_stack.cpp:213-217](../src/protocol/srs_protocol_rtmp_stack.cpp#L213-L217))는
 "WindowAckSize를 안 보내면서 ACK는 기대하는" 별난 인코더를 위해 서버가 기본 윈도우를
 강제로 켜는 장치다. 원본은 설정(`in_ack_size`)으로 노출하지만 srs_simple에서는 API만
 남기고 호출처가 없다 — 기본값 0, 즉 상대가 요청할 때만 ACK한다.
@@ -261,7 +263,7 @@ UserControl (type 4) — 길이가 event_type에 따라 달라진다
    ▲ 이 2바이트를 읽어야 나머지 길이를 알 수 있다 — 고정 스키마가 아니다
 ```
 
-이벤트 테이블 ([SrcPCUCEventType, srs_protocol_rtmp_stack.hpp:979-1044](../src/protocol/srs_protocol_rtmp_stack.hpp#L979-L1044)):
+이벤트 테이블 ([SrcPCUCEventType, srs_protocol_rtmp_stack.hpp:1040-1105](../src/protocol/srs_protocol_rtmp_stack.hpp#L1040-L1105)):
 
 | event | 이름             | 방향   | event_data               | srs_simple의 처리           |
 | ----- | ---------------- | ------ | ------------------------ | --------------------------- |
@@ -278,7 +280,7 @@ UserControl (type 4) — 길이가 event_type에 따라 달라진다
 0x1a 이벤트는 event_data가 4바이트가 아니라 **1바이트**다(페이로드 `00 1A 01`). 그래서
 `SrsUserControlPacket::decode`는 "event_type을 읽고 → 0x1a면 1바이트, 아니면 4바이트 →
 SetBufferLength면 4바이트 더"라는 3단 분기가 된다
-([srs_protocol_rtmp_stack.cpp:1401-1431](../src/protocol/srs_protocol_rtmp_stack.cpp#L1401-L1431)).
+([srs_protocol_rtmp_stack.cpp:1553-1590](../src/protocol/srs_protocol_rtmp_stack.cpp#L1553-L1590)).
 고정 스키마가 아니라 **타입을 읽어야 길이를 아는** 구조 — AMF0(Part 5)의 축소판 예고편인
 셈이다.
 
@@ -287,7 +289,7 @@ SetBufferLength면 4바이트 더"라는 3단 분기가 된다
 서버가 play 요청을 수락하면 제일 먼저 보내는 것이 StreamBegin이다. "이 스트림이 이제
 살아 있으니 데이터를 기대하라"는 신호로, 이것 없이는 일부 플레이어가 이후의 onStatus를
 무시한다. `start_play`의 첫 블록이다
-([srs_protocol_rtmp_stack.cpp:1834-1842](../src/protocol/srs_protocol_rtmp_stack.cpp#L1834-L1842)):
+([srs_protocol_rtmp_stack.cpp:2029-2039](../src/protocol/srs_protocol_rtmp_stack.cpp#L2029-L2039)):
 
 ```cpp
 SrsUserControlPacket* pkt = new SrsUserControlPacket();
@@ -305,8 +307,8 @@ event_data에 싣고, 메시지 자체는 stream_id=0으로 보낸다** — 컨�
 
 RTMP의 keepalive다. 한쪽이 timestamp를 실은 PingRequest를 보내면 상대는 **같은
 timestamp**를 PingResponse로 돌려준다. 처리는 `on_recv_message`의 자동 경로에 있다
-([:1052-1057](../src/protocol/srs_protocol_rtmp_stack.cpp#L1052-L1057) →
-[response_ping_message:1158-1175](../src/protocol/srs_protocol_rtmp_stack.cpp#L1158-L1175)) —
+([:1178-1185](../src/protocol/srs_protocol_rtmp_stack.cpp#L1178-L1185) →
+[response_ping_message:1301-1319](../src/protocol/srs_protocol_rtmp_stack.cpp#L1301-L1319)) —
 앱 층은 핑이 오갔다는 사실조차 모른다.
 
 utest에 에코 전체가 실측되어 있다
@@ -319,7 +321,7 @@ timestamp 4바이트)가 나타난다. 참고로 이 테스트의 입력은 fmt=
 
 플레이어(주로 Flash)가 "내 재생 버퍼는 N ms"라고 알려 오는 이벤트다. 원본 SRS는 이 값을
 성능 튜닝 참고로 기록하고, srs_simple도 `in_buffer_length`에 저장만 한다
-([:1049-1051](../src/protocol/srs_protocol_rtmp_stack.cpp#L1049-L1051)). 서버 동작을
+([:1174-1177](../src/protocol/srs_protocol_rtmp_stack.cpp#L1174-L1177)). 서버 동작을
 바꾸는 데 쓰이지는 않는다 — 디버그 로그(`print_debug_info`)에 찍히는 것이 전부다.
 
 ---
@@ -340,10 +342,10 @@ SetPeerBandwidth (type 6) — payload 5B
 반드시 준수, soft는 현재 대역폭과 비교해 작은 쪽, dynamic은 hard였다가 상황 봐서 완화.
 그러나 **현실에서 이 제한을 집행하는 구현은 사실상 없다.** 서버는 connect 부트스트랩에서
 관례상 한 번 보내고(`set_peer_bandwidth`,
-[srs_protocol_rtmp_stack.cpp:1711-1723](../src/protocol/srs_protocol_rtmp_stack.cpp#L1711-L1723),
+[srs_protocol_rtmp_stack.cpp:1894-1907](../src/protocol/srs_protocol_rtmp_stack.cpp#L1894-L1907),
 type은 dynamic), 받는 쪽 경로는 아예 없다 — `SrsSetPeerBandwidthPacket`에는 `decode`
 오버라이드 자체가 없고
-([srs_protocol_rtmp_stack.hpp:960-976](../src/protocol/srs_protocol_rtmp_stack.hpp#L960-L976)),
+([srs_protocol_rtmp_stack.hpp:1019-1037](../src/protocol/srs_protocol_rtmp_stack.hpp#L1019-L1037)),
 수신되어도 `on_recv_message`의 default로 버려진다. "스펙에는 진지하게 적혀 있으나 와이어
 위에서는 의례가 된 메시지"의 표본이다.
 
@@ -426,8 +428,8 @@ Ping 에코, StreamBegin 송신" 네 가지로 줄어든다. srs_simple의 실�
 
 _이 글은 [srs_simple](../README.md) 프로젝트의 RTMP 이론 시리즈 Part 4이다.
 코드 대조 기준: srs_simple `src/protocol/srs_protocol_rtmp_stack.{hpp,cpp}`
-(`SrsProtocol::on_recv_message:981`, `response_acknowledgement_message:1125`,
-`response_ping_message:1158`, 패킷 5종 :1201-1483), `src/app/srs_app_rtmp_conn.cpp`
+(`SrsProtocol::on_recv_message:1096`, `response_acknowledgement_message:1264`,
+`response_ping_message:1301`, 패킷 5종 :1346-1652), `src/app/srs_app_rtmp_conn.cpp`
 (`service_cycle:122`) / 원본 SRS 6.0 `trunk/src/protocol/srs_protocol_rtmp_stack.cpp:1230`
 (on_recv_message), `:1370`(자동 ACK). 실측 바이트: `utest/srs_utest_protocol.cpp`의
 `OnRecvSetChunkSize`, `OnRecvWindowAckSizeAndAutoAck`, PingRequest 에코 테스트._

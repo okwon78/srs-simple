@@ -22,26 +22,33 @@
 #include <srs_protocol_rtmp_stack.hpp>
 
 // cond가 참이 될 때까지 최대 timeout_ms 만큼 1ms 단위로 폴링한다 (srs_utest_app.cpp와 동일).
-#define SRVHELPER_WAIT_UNTIL(cond, timeout_ms) \
-    for (int _w = 0; _w < (timeout_ms) && !(cond); _w++) usleep(1000)
+#define SRVHELPER_WAIT_UNTIL(cond, timeout_ms)           \
+    for (int _w = 0; _w < (timeout_ms) && !(cond); _w++) \
+    usleep(1000)
 
 // 소멸 시 플래그를 세우는 목 리소스 — 매니저의 비동기 해제를 관찰한다.
 class MockGcResource : public ISrsResource
 {
 public:
-    volatile bool* destroyed;
+    volatile bool *destroyed;
     SrsContextId cid_;
+
 public:
-    MockGcResource(volatile bool* d) : destroyed(d) {
+    MockGcResource(volatile bool *d) : destroyed(d)
+    {
     }
-    virtual ~MockGcResource() {
+    virtual ~MockGcResource()
+    {
         *destroyed = true;
     }
+
 public:
-    virtual const SrsContextId& get_id() {
+    virtual const SrsContextId &get_id()
+    {
         return cid_;
     }
-    virtual std::string desc() {
+    virtual std::string desc()
+    {
         return "MockGc";
     }
 };
@@ -55,7 +62,7 @@ VOID TEST(AppResourceManagerTest, AsyncReap)
     HELPER_ASSERT_SUCCESS(mgr.start());
 
     volatile bool destroyed = false;
-    MockGcResource* r = new MockGcResource(&destroyed);
+    MockGcResource *r = new MockGcResource(&destroyed);
     mgr.add(r);
     EXPECT_EQ(1, (int)mgr.size());
 
@@ -73,7 +80,8 @@ VOID TEST(AppResourceManagerTest, DestructorFreesRemaining)
     srs_error_t err = srs_success;
 
     volatile bool destroyed = false;
-    if (true) {
+    if (true)
+    {
         SrsResourceManager mgr("test");
         HELPER_ASSERT_SUCCESS(mgr.start());
         mgr.add(new MockGcResource(&destroyed));
@@ -89,26 +97,34 @@ class MockRtmpClient
 {
 public:
     int fd;
-    SrsStSocket* io;
-    SrsProtocol* protocol;
+    SrsStSocket *io;
+    SrsProtocol *protocol;
+
 public:
-    MockRtmpClient() : fd(-1), io(NULL), protocol(NULL) {
+    MockRtmpClient() : fd(-1), io(NULL), protocol(NULL)
+    {
     }
-    virtual ~MockRtmpClient() {
+    virtual ~MockRtmpClient()
+    {
         close();
     }
-    void close() {
+    void close()
+    {
         srs_freep(protocol);
         srs_freep(io);
-        if (fd != -1) {
+        if (fd != -1)
+        {
             ::close(fd);
             fd = -1;
         }
     }
+
 public:
-    srs_error_t connect(int port) {
+    srs_error_t connect(int port)
+    {
         fd = ::socket(AF_INET, SOCK_STREAM, 0);
-        if (fd == -1) {
+        if (fd == -1)
+        {
             return srs_error_new(ERROR_SOCKET_CREATE, "socket");
         }
 
@@ -117,7 +133,8 @@ public:
         addr.sin_family = AF_INET;
         addr.sin_port = htons(port);
         addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-        if (::connect(fd, (sockaddr*)&addr, sizeof(addr)) == -1) {
+        if (::connect(fd, (sockaddr *)&addr, sizeof(addr)) == -1)
+        {
             return srs_error_new(ERROR_SOCKET_CREATE, "connect port=%d", port);
         }
 
@@ -128,51 +145,60 @@ public:
         return srs_success;
     }
     // 클라이언트 측 심플 핸드셰이크: C0C1 → S0S1S2 수신 → C2(=S1) 송신.
-    srs_error_t handshake() {
+    srs_error_t handshake()
+    {
         srs_error_t err = srs_success;
 
         char c0c1[1537];
         memset(c0c1, 0x0f, sizeof(c0c1));
         c0c1[0] = 0x03;
-        if ((err = io->write(c0c1, 1537, NULL)) != srs_success) {
+        if ((err = io->write(c0c1, 1537, NULL)) != srs_success)
+        {
             return srs_error_wrap(err, "write c0c1");
         }
 
         char s0s1s2[3073];
-        if ((err = io->read_fully(s0s1s2, 3073, NULL)) != srs_success) {
+        if ((err = io->read_fully(s0s1s2, 3073, NULL)) != srs_success)
+        {
             return srs_error_wrap(err, "read s0s1s2");
         }
-        if (s0s1s2[0] != 0x03) {
+        if (s0s1s2[0] != 0x03)
+        {
             return srs_error_new(ERROR_RTMP_HANDSHAKE, "s0=%#x", s0s1s2[0]);
         }
         // S2는 C1의 복사본이어야 한다 (CLAUDE.md §2.1).
-        if (memcmp(s0s1s2 + 1537, c0c1 + 1, 1536) != 0) {
+        if (memcmp(s0s1s2 + 1537, c0c1 + 1, 1536) != 0)
+        {
             return srs_error_new(ERROR_RTMP_HANDSHAKE, "s2 != c1");
         }
 
         // C2 = S1 복사.
-        if ((err = io->write(s0s1s2 + 1, 1536, NULL)) != srs_success) {
+        if ((err = io->write(s0s1s2 + 1, 1536, NULL)) != srs_success)
+        {
             return srs_error_wrap(err, "write c2");
         }
         return err;
     }
-    srs_error_t connect_app(int port) {
+    srs_error_t connect_app(int port)
+    {
         srs_error_t err = srs_success;
 
         char tcUrl[128];
         snprintf(tcUrl, sizeof(tcUrl), "rtmp://127.0.0.1:%d/live", port);
 
-        SrsConnectAppPacket* pkt = new SrsConnectAppPacket();
+        SrsConnectAppPacket *pkt = new SrsConnectAppPacket();
         pkt->command_object->set("app", SrsAmf0Any::str("live"));
         pkt->command_object->set("tcUrl", SrsAmf0Any::str(tcUrl));
         pkt->command_object->set("objectEncoding", SrsAmf0Any::number(0));
-        if ((err = protocol->send_and_free_packet(pkt, 0)) != srs_success) {
+        if ((err = protocol->send_and_free_packet(pkt, 0)) != srs_success)
+        {
             return srs_error_wrap(err, "send connect");
         }
 
-        SrsCommonMessage* msg = NULL;
-        SrsConnectAppResPacket* res = NULL;
-        if ((err = protocol->expect_message<SrsConnectAppResPacket>(&msg, &res)) != srs_success) {
+        SrsCommonMessage *msg = NULL;
+        SrsConnectAppResPacket *res = NULL;
+        if ((err = protocol->expect_message<SrsConnectAppResPacket>(&msg, &res)) != srs_success)
+        {
             return srs_error_wrap(err, "expect connect response");
         }
         srs_freep(msg);
@@ -180,78 +206,92 @@ public:
         return err;
     }
     // onStatus(code)가 올 때까지 커맨드 메시지를 소비한다 (onFCPublish 등은 건너뜀).
-    srs_error_t expect_on_status(std::string expect_code) {
+    srs_error_t expect_on_status(std::string expect_code)
+    {
         srs_error_t err = srs_success;
 
-        while (true) {
-            SrsCommonMessage* msg = NULL;
-            if ((err = protocol->recv_message(&msg)) != srs_success) {
+        while (true)
+        {
+            SrsCommonMessage *msg = NULL;
+            if ((err = protocol->recv_message(&msg)) != srs_success)
+            {
                 return srs_error_wrap(err, "recv");
             }
-            if (!msg->header.is_amf0_command()) {
+            if (!msg->header.is_amf0_command())
+            {
                 srs_freep(msg);
                 continue;
             }
 
             SrsBuffer b(msg->payload, msg->size);
             std::string cmd;
-            if ((err = srs_amf0_read_string(&b, cmd)) != srs_success) {
+            if ((err = srs_amf0_read_string(&b, cmd)) != srs_success)
+            {
                 srs_freep(msg);
                 return srs_error_wrap(err, "read command name");
             }
-            if (cmd != "onStatus") {
+            if (cmd != "onStatus")
+            {
                 srs_freep(msg);
                 continue;
             }
 
             double tid = 0;
-            if ((err = srs_amf0_read_number(&b, tid)) != srs_success) {
+            if ((err = srs_amf0_read_number(&b, tid)) != srs_success)
+            {
                 srs_freep(msg);
                 return srs_error_wrap(err, "read tid");
             }
-            if ((err = srs_amf0_read_null(&b)) != srs_success) {
+            if ((err = srs_amf0_read_null(&b)) != srs_success)
+            {
                 srs_freep(msg);
                 return srs_error_wrap(err, "read null");
             }
-            SrsAmf0Any* any = NULL;
-            if ((err = srs_amf0_read_any(&b, &any)) != srs_success) {
+            SrsAmf0Any *any = NULL;
+            if ((err = srs_amf0_read_any(&b, &any)) != srs_success)
+            {
                 srs_freep(msg);
                 return srs_error_wrap(err, "read data");
             }
 
             std::string code;
-            if (any->is_object()) {
-                SrsAmf0Any* prop = any->to_object()->ensure_property_string(StatusCode);
-                if (prop) {
+            if (any->is_object())
+            {
+                SrsAmf0Any *prop = any->to_object()->ensure_property_string(StatusCode);
+                if (prop)
+                {
                     code = prop->to_str();
                 }
             }
             srs_freep(any);
             srs_freep(msg);
 
-            if (code == expect_code) {
+            if (code == expect_code)
+            {
                 return srs_success;
             }
             // 기대와 다른 onStatus(Play.Reset 등)는 건너뛴다.
         }
     }
     // audio/video 미디어 메시지 송신.
-    srs_error_t send_media(int8_t type, uint32_t timestamp, int stream_id) {
+    srs_error_t send_media(int8_t type, uint32_t timestamp, int stream_id)
+    {
         SrsMessageHeader header;
         header.message_type = type;
         header.timestamp = timestamp;
         header.stream_id = stream_id;
         header.prefer_cid = (type == RTMP_MSG_AudioMessage) ? RTMP_CID_Audio : RTMP_CID_Video;
 
-        char payload[] = { (char)0xaf, (char)0x01, (char)0x00 };
+        char payload[] = {(char)0xaf, (char)0x01, (char)0x00};
         header.payload_length = sizeof(payload);
 
-        char* p = new char[sizeof(payload)];
+        char *p = new char[sizeof(payload)];
         memcpy(p, payload, sizeof(payload));
 
-        SrsSharedPtrMessage* msg = new SrsSharedPtrMessage();
+        SrsSharedPtrMessage *msg = new SrsSharedPtrMessage();
         srs_error_t err = msg->create(&header, p, sizeof(payload));
-        if (err != srs_success) {
+        if (err != srs_success)
+        {
             srs_freep(msg);
             return err;
         }
@@ -260,23 +300,26 @@ public:
 };
 
 // 임시 포트로 서버를 띄우고 실제 바인딩된 포트를 얻는다.
-static srs_error_t mock_server_listen(SrsServer* server, int* pport)
+static srs_error_t mock_server_listen(SrsServer *server, int *pport)
 {
     srs_error_t err = srs_success;
 
-    _srs_config->listen_port = 0;
-    // S10: HTTP 리스너도 임시 포트로 — 8080을 실서버가 점유해도 테스트가 통과해야 한다.
-    _srs_config->http_listen_port = 0;
-    if ((err = server->initialize()) != srs_success) {
+    _srs_config->rtmp_listen_port = 0;
+    // HTTP 리스너(S15)도 임시 포트로 — 8081이 실행 중인 서버에 점유돼 있어도 통과.
+    _srs_config->llhls_http_port = 0;
+    if ((err = server->initialize()) != srs_success)
+    {
         return srs_error_wrap(err, "initialize");
     }
-    if ((err = server->listen()) != srs_success) {
+    if ((err = server->listen()) != srs_success)
+    {
         return srs_error_wrap(err, "listen");
     }
 
     sockaddr_in addr;
     socklen_t alen = sizeof(addr);
-    if (getsockname(server->rtmp_listener_->lfd, (sockaddr*)&addr, &alen) == -1) {
+    if (getsockname(server->rtmp_listener_->lfd, (sockaddr *)&addr, &alen) == -1)
+    {
         return srs_error_new(ERROR_SOCKET_LISTEN, "getsockname");
     }
     *pport = ntohs(addr.sin_port);
@@ -305,37 +348,42 @@ VOID TEST(AppServerTest, FmlePublishLifecycle)
     // FMLE publish 시퀀스를 파이프라인으로 송신 (OBS/ffmpeg과 동일 순서).
     HELPER_ASSERT_SUCCESS(client.protocol->send_and_free_packet(SrsFMLEStartPacket::create_release_stream("livestream"), 0));
     HELPER_ASSERT_SUCCESS(client.protocol->send_and_free_packet(SrsFMLEStartPacket::create_FC_publish("livestream"), 0));
-    if (true) {
-        SrsCreateStreamPacket* pkt = new SrsCreateStreamPacket();
+    if (true)
+    {
+        SrsCreateStreamPacket *pkt = new SrsCreateStreamPacket();
         pkt->transaction_id = 4;
         HELPER_ASSERT_SUCCESS(client.protocol->send_and_free_packet(pkt, 0));
     }
-    if (true) {
-        SrsPublishPacket* pkt = new SrsPublishPacket();
+    if (true)
+    {
+        SrsPublishPacket *pkt = new SrsPublishPacket();
         pkt->stream_name = "livestream";
         HELPER_ASSERT_SUCCESS(client.protocol->send_and_free_packet(pkt, 1));
     }
 
     // 응답: _result(releaseStream tid=2) → _result(FCPublish tid=3) → _result(createStream tid=4).
-    if (true) {
-        SrsCommonMessage* msg = NULL;
-        SrsFMLEStartResPacket* res = NULL;
+    if (true)
+    {
+        SrsCommonMessage *msg = NULL;
+        SrsFMLEStartResPacket *res = NULL;
         HELPER_ASSERT_SUCCESS(client.protocol->expect_message<SrsFMLEStartResPacket>(&msg, &res));
         EXPECT_EQ(2, (int)res->transaction_id);
         srs_freep(msg);
         srs_freep(res);
     }
-    if (true) {
-        SrsCommonMessage* msg = NULL;
-        SrsFMLEStartResPacket* res = NULL;
+    if (true)
+    {
+        SrsCommonMessage *msg = NULL;
+        SrsFMLEStartResPacket *res = NULL;
         HELPER_ASSERT_SUCCESS(client.protocol->expect_message<SrsFMLEStartResPacket>(&msg, &res));
         EXPECT_EQ(3, (int)res->transaction_id);
         srs_freep(msg);
         srs_freep(res);
     }
-    if (true) {
-        SrsCommonMessage* msg = NULL;
-        SrsCreateStreamResPacket* res = NULL;
+    if (true)
+    {
+        SrsCommonMessage *msg = NULL;
+        SrsCreateStreamResPacket *res = NULL;
         HELPER_ASSERT_SUCCESS(client.protocol->expect_message<SrsCreateStreamResPacket>(&msg, &res));
         EXPECT_EQ(4, (int)res->transaction_id);
         EXPECT_EQ(1, (int)res->stream_id);
@@ -346,22 +394,25 @@ VOID TEST(AppServerTest, FmlePublishLifecycle)
     HELPER_ASSERT_SUCCESS(client.expect_on_status(StatusCodePublishStart));
 
     // 미디어 송신 — 서버 publishing 루프가 audio/video로 분류한다.
-    for (int i = 0; i < 10; i++) {
+    for (int i = 0; i < 10; i++)
+    {
         HELPER_ASSERT_SUCCESS(client.send_media(RTMP_MSG_AudioMessage, 10 * i, 1));
         HELPER_ASSERT_SUCCESS(client.send_media(RTMP_MSG_VideoMessage, 10 * i, 1));
     }
 
     // FCUnpublish → 서버가 3종 응답 후 재-publish 루프로 (ERROR_CONTROL_REPUBLISH 경로).
-    if (true) {
-        SrsFMLEStartPacket* pkt = new SrsFMLEStartPacket();
+    if (true)
+    {
+        SrsFMLEStartPacket *pkt = new SrsFMLEStartPacket();
         pkt->command_name = RTMP_AMF0_COMMAND_UNPUBLISH;
         pkt->transaction_id = 6;
         pkt->stream_name = "livestream";
         HELPER_ASSERT_SUCCESS(client.protocol->send_and_free_packet(pkt, 1));
     }
-    if (true) {
-        SrsCommonMessage* msg = NULL;
-        SrsFMLEStartResPacket* res = NULL;
+    if (true)
+    {
+        SrsCommonMessage *msg = NULL;
+        SrsFMLEStartResPacket *res = NULL;
         HELPER_ASSERT_SUCCESS(client.protocol->expect_message<SrsFMLEStartResPacket>(&msg, &res));
         EXPECT_EQ(6, (int)res->transaction_id);
         srs_freep(msg);
@@ -400,30 +451,34 @@ VOID TEST(AppServerTest, PlayBootstrap)
     HELPER_ASSERT_SUCCESS(client.connect_app(port));
 
     // createStream(tid=2) → _result(streamId=1)
-    if (true) {
-        SrsCreateStreamPacket* pkt = new SrsCreateStreamPacket();
+    if (true)
+    {
+        SrsCreateStreamPacket *pkt = new SrsCreateStreamPacket();
         pkt->transaction_id = 2;
         HELPER_ASSERT_SUCCESS(client.protocol->send_and_free_packet(pkt, 0));
     }
-    if (true) {
-        SrsCommonMessage* msg = NULL;
-        SrsCreateStreamResPacket* res = NULL;
+    if (true)
+    {
+        SrsCommonMessage *msg = NULL;
+        SrsCreateStreamResPacket *res = NULL;
         HELPER_ASSERT_SUCCESS(client.protocol->expect_message<SrsCreateStreamResPacket>(&msg, &res));
         EXPECT_EQ(1, (int)res->stream_id);
         srs_freep(msg);
         srs_freep(res);
     }
     // play("livestream", sid=1)
-    if (true) {
-        SrsPlayPacket* pkt = new SrsPlayPacket();
+    if (true)
+    {
+        SrsPlayPacket *pkt = new SrsPlayPacket();
         pkt->stream_name = "livestream";
         HELPER_ASSERT_SUCCESS(client.protocol->send_and_free_packet(pkt, 1));
     }
 
     // StreamBegin(sid=1) — stream_id=0으로 온다 (CLAUDE.md §2.5).
-    if (true) {
-        SrsCommonMessage* msg = NULL;
-        SrsUserControlPacket* pkt = NULL;
+    if (true)
+    {
+        SrsCommonMessage *msg = NULL;
+        SrsUserControlPacket *pkt = NULL;
         HELPER_ASSERT_SUCCESS(client.protocol->expect_message<SrsUserControlPacket>(&msg, &pkt));
         EXPECT_EQ(SrcPCUCStreamBegin, pkt->event_type);
         EXPECT_EQ(1, pkt->event_data);
@@ -457,7 +512,8 @@ VOID TEST(AppServerTest, SurvivesAbruptClose)
 
     // 동시 다중 접속 + 제각각 비정상 절단.
     MockRtmpClient clients[3];
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < 3; i++)
+    {
         HELPER_ASSERT_SUCCESS(clients[i].connect(port));
     }
     SRVHELPER_WAIT_UNTIL(server.conn_manager->size() == 3, 2000);
@@ -465,7 +521,8 @@ VOID TEST(AppServerTest, SurvivesAbruptClose)
 
     // 0: 핸드셰이크 없이 절단, 1: C0C1만 보내고 절단, 2: 핸드셰이크 후 절단.
     clients[0].close();
-    if (true) {
+    if (true)
+    {
         char c0c1[1537];
         memset(c0c1, 0, sizeof(c0c1));
         c0c1[0] = 0x03;

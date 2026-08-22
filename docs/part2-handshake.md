@@ -16,6 +16,8 @@
 > 7. [커맨드 흐름 (2) — publish와 미디어 메시지](part7-publish.md)
 > 8. [커맨드 흐름 (3) — play와 중간 입장 문제](part8-play.md)
 > 9. [(보너스) 서버 내부 — 팬아웃, 캐시, 지터](part9-server-internals.md)
+> 10. [(보너스 2) HLS — 같은 스트림을 HTTP로 배달하기](part10-hls.md)
+> 11. [(보너스 3) LL-HLS — 지연과의 싸움: 파트, 블로킹 리로드, fMP4](part11-llhls.md)
 
 이 글은 Part 1까지 읽었다고 가정한다. Part 1에서 본 층 모델(메시지/청크/TCP)이 시작되기 **전**,
 모든 RTMP 연결이 반드시 통과하는 첫 관문이 핸드셰이크다. 청크도 메시지도 아닌, 크기가 고정된
@@ -226,7 +228,7 @@ srs_error_t SrsHandshakeBytes::read_c0c1(ISrsProtocolReader *io)
 
 수명도 짚어 두자. 이 3개 버퍼는 합쳐서 약 6KB(1,537+3,073+1,536 = 6,146바이트)인데, 핸드셰이크가 끝나면 아무 쓸모가 없다.
 그래서 소유자인 `SrsRtmpServer::handshake`가 성공 직후 `dispose()`로 반납한다
-([srs_protocol_rtmp_stack.cpp:1631-1646](../src/protocol/srs_protocol_rtmp_stack.cpp#L1631-L1646)).
+([srs_protocol_rtmp_stack.cpp:1806-1822](../src/protocol/srs_protocol_rtmp_stack.cpp#L1806-L1822)).
 수만 연결을 다루는 원본에서는 연결당 6KB가 진지한 비용이라 이 정리가 의미 있고,
 srs_simple은 구조를 그대로 유지했다.
 
@@ -326,7 +328,7 @@ flowchart TB
 ### 4.3 srs_simple의 선택: 심플만
 
 srs_simple의 같은 함수는 폴백 없이 심플로 직행한다
-([srs_protocol_rtmp_stack.cpp:1637-1641](../src/protocol/srs_protocol_rtmp_stack.cpp#L1637-L1641)).
+([srs_protocol_rtmp_stack.cpp:1812-1817](../src/protocol/srs_protocol_rtmp_stack.cpp#L1812-L1817)).
 근거는 클라이언트 매트릭스다:
 
 | 클라이언트             | version 필드   | 필요한 핸드셰이크             |
@@ -388,7 +390,7 @@ EXPECT_EQ(0, memcmp(out + 1537, c0c1 + 1, 1536));      // S2 = C1 복사 ★
 이미 나간 뒤다** — §1에서 본 파이프라이닝(서버는 C2를 기다리지 않고 먼저 쓴다)의 증거다.
 
 반대 방향(클라이언트 역할)은 통합 테스트의 `MockRtmpClient::handshake`가 보여준다
-([utest/srs_utest_server.cpp:131-158](../utest/srs_utest_server.cpp#L131-L158)).
+([utest/srs_utest_server.cpp:148-181](../utest/srs_utest_server.cpp#L148-L181)).
 실소켓으로 서버에 붙어 C0C1을 쓰고, S0S1S2를 읽어 **S2 = C1 복사를 검증**하고(클라이언트는
 검증해도 된다 — 서버가 성실하게 만드니까), C2 자리에는 받은 S1을 복사해 보낸다. 서버가 C2를
 버리는 걸 알지만 관례대로 만드는, §2.3의 비대칭이 코드로 재현된 모습이다.

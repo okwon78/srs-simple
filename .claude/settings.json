@@ -1,5 +1,11 @@
 {
   "permissions": {
-    "additionalDirectories": ["../srs", "../sts"]
+    "additionalDirectories": [
+      "../srs",
+      "../sts",
+      "../OvenMediaEngine",
+      "../mediamtx",
+      "../llhls-streaming"
+    ]
   }
 }

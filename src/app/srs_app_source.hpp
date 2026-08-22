@@ -5,11 +5,11 @@
 //   SrsLiveConsumer    — play 클라이언트 1개 = jitter + queue + cond wait
 //   SrsGopCache        — 키프레임에서 clear 후 재시작. 항상 [마지막 키프레임..현재] 유지
 //   SrsMetaCache       — onMetaData + AVC/AAC 시퀀스 헤더. 중간 입장 플레이어의 정합성
-//   SrsOriginHub       — RTMP 밖으로 나가는 소비자(S10: HLS)로의 분기점
+//   SrsOriginHub       — RTMP 밖으로 나가는 소비자(S10: HLS, S13: LL-HLS)로의 분기점
 //   SrsLiveSource      — 스트림 1개의 허브. on_audio/on_video/on_meta_data → 팬아웃
 //   SrsLiveSourceManager — "vhost/app/stream" → source 맵
 // 원본 대비 제거: edge/bridge/mix_correct·atc/reload/통계/hourglass 소스 청소,
-// OriginHub의 DVR·Forward·Transcode·HDS(HLS만 유지 — S10) — CLAUDE.md §5.6.
+// OriginHub의 DVR·Forward·Transcode·HDS(HLS/LL-HLS만 유지 — S10/S13) — CLAUDE.md §5.6.
 // pthread 전환: SrsLiveSource/SrsLiveConsumer에 내부 mutex (CLAUDE.md §5.1).
 #ifndef SRS_APP_SOURCE_HPP
 #define SRS_APP_SOURCE_HPP
@@ -34,6 +34,8 @@ class SrsOnMetaDataPacket;
 class SrsRequest;
 class SrsFormat;
 class SrsHls;
+class SrsLlHls;
+class SrsLlHlsStorage;
 
 // The time jitter algorithm:
 // 1. full, to ensure stream start at zero, and ensure stream monotonically increasing.
@@ -254,9 +256,10 @@ public:
 };
 
 // The hub for origin: RTMP 팬아웃 밖의 소비자로 가는 분기점.
-// 원본은 HLS/DVR/Forward/Transcode/HDS를 모두 물고 있으나 HLS만 유지 (CLAUDE.md §5.6 S10).
+// 원본은 HLS/DVR/Forward/Transcode/HDS를 모두 물고 있으나 HLS와 LL-HLS(S13)만 유지
+// (CLAUDE.md §5.6 S10/S13).
 // 원본은 SrsLiveSource가 SrsRtmpFormat을 소유하고 hub에 넘기지만,
-// 여기서는 hub가 SrsFormat을 직접 소유한다 — 코덱 파싱의 유일한 소비자가 HLS라서.
+// 여기서는 hub가 SrsFormat을 직접 소유한다 — 코덱 파싱의 소비자가 HLS/LL-HLS뿐이라서.
 class SrsOriginHub
 {
 private:
@@ -268,6 +271,8 @@ private:
     SrsFormat* format;
     // hls handler.
     SrsHls* hls;
+    // ll-hls handler (S13 — 기존 hls와 나란히, 같은 스트림을 두 소비 모델로).
+    SrsLlHls* llhls;
 public:
     SrsOriginHub();
     virtual ~SrsOriginHub();
@@ -277,6 +282,9 @@ public:
     virtual srs_error_t initialize(SrsLiveSource* s, SrsRequest* r);
     // Whether the stream hub is active, or stream is publishing.
     virtual bool active();
+    // The LL-HLS storage for HTTP serving (S15). 포인터는 hub 수명 동안 불변이라
+    // 락 없이 읽어도 된다 — HTTP 스레드는 storage 자체 락만 잡는다 (락 규율).
+    virtual SrsLlHlsStorage* llhls_storage();
 public:
     // When got a parsed audio/video packet.
     virtual srs_error_t on_audio(SrsSharedPtrMessage* shared_audio);
@@ -290,7 +298,7 @@ public:
 
 // The source manager to create and refresh all stream sources.
 // 원본은 SrsSharedPtr + hourglass 타이머로 죽은 소스를 청소하지만, 여기서는
-// 생성된 소스를 프로세스 종료까지 유지한다 (CLAUDE.md §5.6 "S8 부수 단순화").
+// 생성된 소스를 프로세스 종료까지 유지한다 (CLAUDE.md §5.6 S8).
 class SrsLiveSourceManager
 {
 private:
@@ -306,6 +314,11 @@ public:
     virtual srs_error_t fetch_or_create(SrsRequest* r, SrsLiveSource** pps);
     // Get the exists source, NULL when not exists.
     virtual SrsLiveSource* fetch(SrsRequest* r);
+    // Get the exists source by app/stream, ignoring vhost (S15 HTTP 라우팅용).
+    // HTTP 경로에는 vhost가 없고 srs_simple은 단일 vhost 서버다 — RTMP 접속
+    // 호스트에 따라 키의 vhost가 달라지므로(localhost/127.0.0.1/도메인)
+    // "…/app/stream" 접미사로 조회한다 (원본 대응물 없음 — CLAUDE.md §5.6 S15).
+    virtual SrsLiveSource* fetch(std::string app, std::string stream);
 };
 
 // Global singleton instance.
@@ -353,6 +366,10 @@ public:
     virtual SrsContextId pre_source_id();
 public:
     virtual bool can_publish();
+    // The LL-HLS storage of this stream (S15 HTTP 서빙용). source가 프로세스 종료까지
+    // 살고(§5.6 S8) 포인터가 불변이라 source lock_ 없이 반환한다 — HTTP 스레드는
+    // source lock을 절대 잡지 않는다 (srs_app_llhls.hpp 락 규율).
+    virtual SrsLlHlsStorage* llhls_storage();
     virtual srs_error_t on_meta_data(SrsCommonMessage* msg, SrsOnMetaDataPacket* metadata);
 public:
     virtual srs_error_t on_audio(SrsCommonMessage* audio);

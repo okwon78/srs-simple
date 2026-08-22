@@ -1,5 +1,6 @@
 // srs_simple — 원본: trunk/src/kernel/srs_kernel_file.hpp
-// HLS(S10)가 세그먼트(.ts)/플레이리스트(.m3u8)를 쓰고, HTTP 정적 서버가 읽는다.
+// HLS(S10)가 세그먼트(.ts)/플레이리스트(.m3u8)를 쓴다. 읽기 쪽이던 HTTP 정적 서버는
+// S11에서 제거돼(외부 nginx), SrsFileReader는 utest만 사용한다.
 // 원본 대비 제거: set_iobuf_size/버퍼링, seek 계열, mock용 함수 포인터 훅 — CLAUDE.md §5.6 S10.
 #ifndef SRS_KERNEL_FILE_HPP
 #define SRS_KERNEL_FILE_HPP

@@ -124,6 +124,45 @@ TEST(KernelCodecTest, FormatAvcDemuxSpsPps)
     EXPECT_TRUE(f.vcodec->is_avc_codec_ok());
 }
 
+TEST(KernelCodecTest, FormatAvcDemuxSpsResolution)
+{
+    srs_error_t err = srs_success;
+
+    // 실제 x264 SPS (320x240, high profile) — emulation bytes(00 00 03) 포함 (S16).
+    static const uint8_t sps[] = {
+        0x67, 0x64, 0x00, 0x0d, 0xac, 0xd9, 0x41, 0x41, 0xfb, 0x01, 0x10, 0x00, 0x00,
+        0x03, 0x00, 0x10, 0x00, 0x00, 0x03, 0x03, 0xc0, 0xf1, 0x42, 0x99, 0x60,
+    };
+    static const uint8_t pps[] = {0x68, 0xeb, 0xec, 0xb2, 0x2c};
+
+    string sh;
+    const uint8_t head[] = {0x17, 0x00, 0x00, 0x00, 0x00};
+    sh.append((const char*)head, sizeof(head));
+    const uint8_t avcc[] = {0x01, 0x64, 0x00, 0x0d, 0xff, 0xe1};
+    sh.append((const char*)avcc, sizeof(avcc));
+    sh.push_back(0x00); sh.push_back((char)sizeof(sps));
+    sh.append((const char*)sps, sizeof(sps));
+    sh.push_back(0x01);
+    sh.push_back(0x00); sh.push_back((char)sizeof(pps));
+    sh.append((const char*)pps, sizeof(pps));
+
+    SrsFormat f;
+    HELPER_ASSERT_SUCCESS(f.initialize());
+    HELPER_ASSERT_SUCCESS(f.on_video(0, (char*)sh.data(), (int)sh.size()));
+
+    ASSERT_TRUE(f.vcodec != NULL);
+    EXPECT_EQ(320, f.vcodec->width);
+    EXPECT_EQ(240, f.vcodec->height);
+
+    // 파싱 불가한(잘린) SPS는 best-effort — 에러 없이 해상도만 0으로 남는다 (§5.6 S16).
+    SrsFormat f2;
+    HELPER_ASSERT_SUCCESS(f2.initialize());
+    string sh2 = mock_avc_sh();
+    HELPER_ASSERT_SUCCESS(f2.on_video(0, (char*)sh2.data(), (int)sh2.size()));
+    EXPECT_EQ(0, f2.vcodec->width);
+    EXPECT_EQ(0, f2.vcodec->height);
+}
+
 TEST(KernelCodecTest, FormatAvcDemuxNalus)
 {
     srs_error_t err = srs_success;

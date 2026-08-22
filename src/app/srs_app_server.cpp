@@ -29,7 +29,8 @@ srs_error_t SrsServer::initialize()
 {
     srs_error_t err = srs_success;
 
-    if ((err = conn_manager->start()) != srs_success) {
+    if ((err = conn_manager->start()) != srs_success)
+    {
         return srs_error_wrap(err, "conn manager");
     }
 
@@ -40,21 +41,23 @@ srs_error_t SrsServer::listen()
 {
     srs_error_t err = srs_success;
 
-    rtmp_listener_->set_label("RTMP")->set_endpoint("0.0.0.0", _srs_config->listen_port);
-    if ((err = rtmp_listener_->listen()) != srs_success) {
+    rtmp_listener_->set_label("RTMP")->set_endpoint("0.0.0.0", _srs_config->rtmp_listen_port);
+    if ((err = rtmp_listener_->listen()) != srs_success)
+    {
         return srs_error_wrap(err, "rtmp listen");
     }
 
-    // S10: HLS 파일(.m3u8/.ts) 서빙용 HTTP 리스너.
-    http_listener_->set_label("HTTP")->set_endpoint("0.0.0.0", _srs_config->http_listen_port);
-    if ((err = http_listener_->listen()) != srs_success) {
+    // S15: LL-HLS 블로킹 서빙용 내장 HTTP 리스너 (TS-HLS 파일은 여전히 외부 nginx).
+    http_listener_->set_label("HTTP")->set_endpoint("0.0.0.0", _srs_config->llhls_http_port);
+    if ((err = http_listener_->listen()) != srs_success)
+    {
         return srs_error_wrap(err, "http listen");
     }
 
     return err;
 }
 
-srs_error_t SrsServer::on_tcp_client(ISrsListener* listener, srs_netfd_t stfd)
+srs_error_t SrsServer::on_tcp_client(ISrsListener *listener, srs_netfd_t stfd)
 {
     srs_error_t err = do_on_tcp_client(listener, stfd);
 
@@ -64,7 +67,7 @@ srs_error_t SrsServer::on_tcp_client(ISrsListener* listener, srs_netfd_t stfd)
     return err;
 }
 
-srs_error_t SrsServer::do_on_tcp_client(ISrsListener* listener, srs_netfd_t& stfd)
+srs_error_t SrsServer::do_on_tcp_client(ISrsListener *listener, srs_netfd_t &stfd)
 {
     srs_error_t err = srs_success;
 
@@ -73,7 +76,8 @@ srs_error_t SrsServer::do_on_tcp_client(ISrsListener* listener, srs_netfd_t& stf
     int port = srs_get_peer_port(fd);
 
     // Ignore if ip is empty, for example, load balancer keepalive.
-    if (ip.empty()) {
+    if (ip.empty())
+    {
         return err;
     }
 
@@ -81,15 +85,19 @@ srs_error_t SrsServer::do_on_tcp_client(ISrsListener* listener, srs_netfd_t& stf
     srs_netfd_t stfd2 = stfd;
     stfd = SRS_NETFD_INVALID;
 
-    // 리스너에 따라 RTMP/HTTP 연결을 생성한다 (원본 do_on_tcp_client의 분기 축소판).
-    ISrsResource* resource = NULL;
-    ISrsStartable* conn = NULL;
-    if (listener == http_listener_) {
-        SrsHttpConn* c = new SrsHttpConn(this, stfd2, ip, port);
+    // 리스너에 따라 RTMP/HTTP 연결을 생성한다 (원본 do_on_tcp_client의 분기 축소판 —
+    // HTTP는 LL-HLS 전용, TS-HLS 파일 서빙은 외부 nginx — CLAUDE.md §5.6 S11/S15).
+    ISrsResource *resource = NULL;
+    ISrsStartable *conn = NULL;
+    if (listener == http_listener_)
+    {
+        SrsHttpConn *c = new SrsHttpConn(this, stfd2, ip, port);
         resource = c;
         conn = c;
-    } else {
-        SrsRtmpConn* c = new SrsRtmpConn(this, stfd2, ip, port);
+    }
+    else
+    {
+        SrsRtmpConn *c = new SrsRtmpConn(this, stfd2, ip, port);
         resource = c;
         conn = c;
     }
@@ -98,7 +106,8 @@ srs_error_t SrsServer::do_on_tcp_client(ISrsListener* listener, srs_netfd_t& stf
     conn_manager->add(resource);
 
     // 연결 전용 스레드 시작. 실패하면 매니저가 다른 스레드에서 해제한다.
-    if ((err = conn->start()) != srs_success) {
+    if ((err = conn->start()) != srs_success)
+    {
         conn_manager->remove(resource);
         return srs_error_wrap(err, "start conn coroutine");
     }
@@ -106,7 +115,7 @@ srs_error_t SrsServer::do_on_tcp_client(ISrsListener* listener, srs_netfd_t& stf
     return err;
 }
 
-void SrsServer::remove(ISrsResource* c)
+void SrsServer::remove(ISrsResource *c)
 {
     // 실제 해제는 conn_manager의 reaper 스레드가 한다.
     conn_manager->remove(c);

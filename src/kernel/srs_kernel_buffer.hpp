@@ -1,5 +1,6 @@
 // srs_simple — 원본: trunk/src/kernel/srs_kernel_buffer.hpp
-// SrsBuffer만 유지 (SrsBitBuffer, ISrsCodec 계층은 라이브 경로에 불필요).
+// SrsBuffer 유지 (ISrsCodec 계층은 라이브 경로에 불필요).
+// SrsBitBuffer는 S16에서 SPS 해상도 파싱용으로 서브셋 복원 (CLAUDE.md §5.6 S16).
 #ifndef SRS_KERNEL_BUFFER_HPP
 #define SRS_KERNEL_BUFFER_HPP
 
@@ -83,6 +84,26 @@ public:
     void write_string(std::string value);
     // Write bytes to buffer
     void write_bytes(char* data, int size);
+};
+
+/**
+ * the bit buffer, base on SrsBuffer,
+ * for exmaple, the h.264 avc buffer is bit buffer.
+ * 원본의 read_bits/ue/se류 없이 read_bit만 유지 — SPS 해상도 파싱(exp-Golomb 헬퍼가
+ * read_bit 위에서 동작)에 필요한 최소만 (§5.6 S16).
+ */
+class SrsBitBuffer
+{
+private:
+    int8_t cb;
+    uint8_t cb_left;
+    SrsBuffer* stream;
+public:
+    SrsBitBuffer(SrsBuffer* b);
+    ~SrsBitBuffer();
+public:
+    bool empty();
+    int8_t read_bit();
 };
 
 #endif

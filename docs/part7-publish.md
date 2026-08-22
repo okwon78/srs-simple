@@ -16,6 +16,8 @@
 > 7. **커맨드 흐름 (2) — publish와 미디어 메시지** (이 글)
 > 8. [커맨드 흐름 (3) — play와 중간 입장 문제](part8-play.md)
 > 9. [(보너스) 서버 내부 — 팬아웃, 캐시, 지터](part9-server-internals.md)
+> 10. [(보너스 2) HLS — 같은 스트림을 HTTP로 배달하기](part10-hls.md)
+> 11. [(보너스 3) LL-HLS — 지연과의 싸움: 파트, 블로킹 리로드, fMP4](part11-llhls.md)
 
 이 글은 Part 6까지 읽었다고 가정한다.
 
@@ -66,13 +68,13 @@ identify가 끝나면 [`stream_service_cycle`](../src/app/srs_app_rtmp_conn.cpp#
 소스를 찾은 뒤
 [`rtmp->start_fmle_publish(stream_id)`](../src/app/srs_app_rtmp_conn.cpp#L253)를
 호출한다. 이 함수
-([`SrsRtmpServer::start_fmle_publish`](../src/protocol/srs_protocol_rtmp_stack.cpp#L1894),
+([`SrsRtmpServer::start_fmle_publish`](../src/protocol/srs_protocol_rtmp_stack.cpp#L2097),
 원본 `protocol/srs_protocol_rtmp_stack.cpp:2647`)는 남은 시퀀스를 위에서 아래로
 직선으로 처리한다. Part 6에서 본 `expect_message<T>` 관용구("T가 나올 때까지 받고,
 다른 타입은 버린다")가 세 번 연달아 나온다:
 
 1. **FCPublish 대기** → tid를 기억해 두고 `_result`
-   ([`SrsFMLEStartResPacket`](../src/protocol/srs_protocol_rtmp_stack.cpp#L2604) —
+   ([`SrsFMLEStartResPacket`](../src/protocol/srs_protocol_rtmp_stack.cpp#L2890) —
    Part 6에서 본 `_result + tid + Null + Undefined`) 응답
 2. **createStream 대기** → `_result(streamId=1)` 응답
    (player 경로에서는 identify가 하던 일을, publisher 경로에서는 여기서 한다)
@@ -80,7 +82,7 @@ identify가 끝나면 [`stream_service_cycle`](../src/app/srs_app_rtmp_conn.cpp#
 
 시퀀스라고 부르지만 서버 입장에서는 상태 기계랄 것도 없다 — 클라이언트가 보내는
 순서가 FMLE 이래 고정돼 있어서, 순서대로 기다리고 에코하면 끝이다. utest의
-[FmlePublishLifecycle](../utest/srs_utest_server.cpp#L287)이 이 파이프라인을
+[FmlePublishLifecycle](../utest/srs_utest_server.cpp#L330)이 이 파이프라인을
 실소켓으로 재현한다: 클라이언트가 releaseStream/FCPublish/createStream/publish를
 **한꺼번에 파이프라인으로 밀어 넣고**, 응답 넷을 순서대로 검증한다. 실제 ffmpeg도
 이렇게 응답을 기다리지 않고 밀어 넣는다 — Part 6 §6에서 본 "커맨드는 대부분
@@ -89,7 +91,7 @@ fire-and-forget"의 publisher판이다.
 3번의 응답인 onFCPublish는 낯선 모양새다:
 
 ```cpp
-// start_fmle_publish 내부 (rtmp_stack.cpp:1952)
+// start_fmle_publish 내부 (rtmp_stack.cpp:2165)
 SrsOnStatusCallPacket* pkt = new SrsOnStatusCallPacket();
 pkt->command_name = RTMP_AMF0_COMMAND_ON_FC_PUBLISH;   // "onFCPublish"
 pkt->data->set(StatusCode,        SrsAmf0Any::str(StatusCodePublishStart));
@@ -100,7 +102,7 @@ FCPublish의 예고("곧 publish하겠다")에 대응하는 통보("시작됐다
 커맨드들과 같은 FMLE 유산이다. ffmpeg/OBS는 이 메시지를 사실상 무시한다 —
 클라이언트가 실제로 기다리는 것은 다음 절의 진짜 onStatus다. 그런데 그 onStatus는
 `start_fmle_publish`가 보내지 않는다.
-[함수 끝의 주석](../src/protocol/srs_protocol_rtmp_stack.cpp#L1964)이 이 파트의
+[함수 끝의 주석](../src/protocol/srs_protocol_rtmp_stack.cpp#L2179)이 이 파트의
 타이밍 규칙 하나를 예고한다: **onStatus(NetStream.Publish.Start)는 인가 통과 후
 `start_publishing`이 분리 송신한다**. 왜 분리인지는 §3에서.
 
@@ -118,7 +120,7 @@ FCPublish의 예고("곧 publish하겠다")에 대응하는 통보("시작됐다
 02 00 04 6C 69 76 65                            string(4)  "live"       ← publish type
 ```
 
-[`SrsPublishPacket::decode`](../src/protocol/srs_protocol_rtmp_stack.cpp#L2714)가
+[`SrsPublishPacket::decode`](../src/protocol/srs_protocol_rtmp_stack.cpp#L3008)가
 읽는 필드는 둘이다:
 
 - **stream_name**: 드디어 스트림 이름이 확정된다. Part 6 §2.1에서 예고했듯
@@ -127,11 +129,11 @@ FCPublish의 예고("곧 publish하겠다")에 대응하는 통보("시작됐다
   `vhost/app/stream` 키로 `SrsLiveSource`를 찾는다
 - **type**: `"live"` / `"record"` / `"append"`. record/append는 FMS의 서버 측 녹화
   지시였고, 라이브 서버에서 의미 있는 값은 live뿐이다. 생략하고 보내는 클라이언트도
-  있어서 [필드가 없으면 기본값 "live"](../src/protocol/srs_protocol_rtmp_stack.cpp#L2737)로
+  있어서 [필드가 없으면 기본값 "live"](../src/protocol/srs_protocol_rtmp_stack.cpp#L3036)로
   둔다
 
 주목할 것은 이 패킷의
-[`get_prefer_cid` = RTMP_CID_OverStream(5)](../src/protocol/srs_protocol_rtmp_stack.cpp#L2744)다.
+[`get_prefer_cid` = RTMP_CID_OverStream(5)](../src/protocol/srs_protocol_rtmp_stack.cpp#L3044)다.
 connect/createStream은 csid 3
 ([RTMP_CID_OverConnection](../src/kernel/srs_kernel_flv.hpp#L42))으로 흘렀는데,
 publish부터 csid가 5로 옮겨간다. Part 1의 구분을 다시 쓰면: **연결에 대한 대화**
@@ -146,10 +148,10 @@ publish부터 csid가 5로 옮겨간다. Part 1의 구분을 다시 쓰면: **�
 
 ### 3.1 패킷의 일반형
 
-[`SrsOnStatusCallPacket`](../src/protocol/srs_protocol_rtmp_stack.hpp#L799)은
+[`SrsOnStatusCallPacket`](../src/protocol/srs_protocol_rtmp_stack.hpp#L844)은
 서버가 스트림 수준 사건을 통보하는 만능 패킷이다. 페이로드 구조는 커맨드 일반형
 그대로인데, 응답이 아니므로 **tid=0**이고 마지막 Object(`data`)에 사건 내용이 담긴다
-([encode_packet](../src/protocol/srs_protocol_rtmp_stack.cpp#L2968)):
+([encode_packet](../src/protocol/srs_protocol_rtmp_stack.cpp#L3294)):
 
 ```text
 02 00 08 6F 6E 53 74 61 74 75 73             string(8)  "onStatus"
@@ -191,11 +193,11 @@ flowchart TB
 [`acquire_publish`](../src/app/srs_app_rtmp_conn.cpp#L418)는 "이 스트림 이름을
 이미 다른 publisher가 점유 중인가"를 검사한다. 같은 이름으로 두 명이 publish하면
 `ERROR_SYSTEM_STREAM_BUSY`로 거절된다 (검사+점유는 pthread 경쟁을 피하려고
-[`SrsLiveSource::on_publish` 내부에서 원자적으로](../src/app/srs_app_source.cpp#L954)
+[`SrsLiveSource::on_publish` 내부에서 원자적으로](../src/app/srs_app_source.cpp#L1133)
 수행한다 — CLAUDE.md §5.6 S8. 원본은 ST 단일 스레드라 conn 쪽 검사로 충분하다).
 
 이 인가를 통과한 **후에만**
-[`start_publishing`](../src/protocol/srs_protocol_rtmp_stack.cpp#L2010)
+[`start_publishing`](../src/protocol/srs_protocol_rtmp_stack.cpp#L2231)
 (원본 :2800)이 onStatus(NetStream.Publish.Start)를 보낸다. 원본이 이슈 #4037로
 onFCPublish와 onStatus를 분리한 이유가 이것이다(CLAUDE.md §5.3 규칙 5): OBS는
 **onStatus를 받는 순간 "송출 성공"으로 판정**한다. 인가 검사 전에 onStatus를 먼저
@@ -226,24 +228,24 @@ type 18(AMF0 data) 메시지로, 커맨드(type 20)와 구조는 같지만 tid�
 `@setDataFrame("onMetaData", {...})` — "이 스트림의 데이터 프레임을 설정하라"는
 원격 호출 — 을 보내는 것이고, 서버는 껍질을 벗긴 `onMetaData({...})`를 구독자들에게
 중계한다.
-[`SrsOnMetaDataPacket::decode`](../src/protocol/srs_protocol_rtmp_stack.cpp#L3054)의
+[`SrsOnMetaDataPacket::decode`](../src/protocol/srs_protocol_rtmp_stack.cpp#L3386)의
 첫 분기가 정확히 그 껍질 벗기기다: 이름이 `@setDataFrame`이면
-[이름을 한 번 더 읽는다](../src/protocol/srs_protocol_rtmp_stack.cpp#L3063).
+[이름을 한 번 더 읽는다](../src/protocol/srs_protocol_rtmp_stack.cpp#L3396).
 
 본문이 Object(0x03)가 아니라 **EcmaArray(0x08)**인 것은 Part 5 §4에서 예고한
 현실이다 — ffmpeg가 그렇게 보낸다. decode는 둘 다 허용하고, EcmaArray면
-[프로퍼티를 Object로 복사](../src/protocol/srs_protocol_rtmp_stack.cpp#L3087)해서
+[프로퍼티를 Object로 복사](../src/protocol/srs_protocol_rtmp_stack.cpp#L3425)해서
 내부 표현을 통일한다.
 
 수신 경로는 [`process_publish_message`](../src/app/srs_app_rtmp_conn.cpp#L542) →
-[`SrsLiveSource::on_meta_data`](../src/app/srs_app_source.cpp#L817) →
-[`SrsMetaCache::update_data`](../src/app/srs_app_source.cpp#L605)다. 캐시에 넣기
+[`SrsLiveSource::on_meta_data`](../src/app/srs_app_source.cpp#L986) →
+[`SrsMetaCache::update_data`](../src/app/srs_app_source.cpp#L607)다. 캐시에 넣기
 전에 서버가 내용에 손을 대는 지점이 흥미롭다:
 
-- [`duration` 프로퍼티 제거](../src/app/srs_app_source.cpp#L614) — VOD 파일을
+- [`duration` 프로퍼티 제거](../src/app/srs_app_source.cpp#L616) — VOD 파일을
   `ffmpeg -re`로 재송출하면 파일의 duration이 딸려 오는데, 라이브 스트림에
   duration이 있으면 일부 플레이어(ExoPlayer)가 유한 길이 재생으로 오동작한다
-- [`server`/`server_version` 주입](../src/app/srs_app_source.cpp#L634) — 서버
+- [`server`/`server_version` 주입](../src/app/srs_app_source.cpp#L637) — 서버
   식별 정보를 붙여 재인코딩한다. 플레이어 쪽에서 `ffprobe`로 보면 이 필드가 보인다
 
 수정본은 `SrsSharedPtrMessage`로 다시 직렬화되어 **MetaCache에 저장**된다. 왜
@@ -286,12 +288,14 @@ video (type 9) 페이로드 = FLV VIDEODATA
 - **1 = NALU**: 실제 압축 프레임. `0x17 0x01`(키프레임) 또는 `0x27 0x01`(중간
   프레임)로 시작한다
 
-[`SrsFlvVideo`](../src/kernel/srs_kernel_codec.cpp#L12)의 세 판별자가 이 두
-바이트만 읽는다: [`keyframe`](../src/kernel/srs_kernel_codec.cpp#L12)은 상위
-4비트==1, [`h264`](../src/kernel/srs_kernel_codec.cpp#L47)는 하위 4비트==7,
-[`sh`](../src/kernel/srs_kernel_codec.cpp#L27)는 "AVC이고 keyframe이고 둘째
+[`SrsFlvVideo`](../src/kernel/srs_kernel_codec.cpp#L19)의 세 판별자가 이 두
+바이트만 읽는다: [`keyframe`](../src/kernel/srs_kernel_codec.cpp#L19)은 상위
+4비트==1, [`h264`](../src/kernel/srs_kernel_codec.cpp#L54)는 하위 4비트==7,
+[`sh`](../src/kernel/srs_kernel_codec.cpp#L34)는 "AVC이고 keyframe이고 둘째
 바이트==0". H.264 비트스트림(NALU 내부)은 서버가 열어보지 않는다 — 릴레이 서버의
-분류 기준은 여기까지고, 그 안쪽은 디코더의 영역이다.
+분류 기준은 여기까지고, 그 안쪽은 디코더의 영역이다. (단 하나의 예외가 HLS
+트랜스먹서다 — 컨테이너를 갈아입히려면 상자를 열어야 하고, 그 이야기가
+[Part 10](part10-hls.md)이다.)
 
 ### 5.2 audio 첫 바이트: format | rate | size | channel
 
@@ -312,16 +316,16 @@ audio (type 8) 페이로드 = FLV AUDIODATA
 AAC의 경우 rate/size/channel 비트는 사실상 장식이다 — 진짜 파라미터는
 **AACPacketType=0**인 시퀀스 헤더의 데이터, AudioSpecificConfig(2바이트 안팎)에
 들어 있다. utest의
-[`send_media`](../utest/srs_utest_server.cpp#L246)가 보내는 최소 오디오 메시지
+[`send_media`](../utest/srs_utest_server.cpp#L285)가 보내는 최소 오디오 메시지
 `AF 01 00`을 읽어 보면: `0xAF`(AAC/44.1k/16bit/stereo) + `0x01`(raw frame) +
-데이터 1바이트. [`SrsFlvAudio::sh/aac`](../src/kernel/srs_kernel_codec.cpp#L68)의
+데이터 1바이트. [`SrsFlvAudio::sh/aac`](../src/kernel/srs_kernel_codec.cpp#L75)의
 판별도 video와 대칭이다.
 
 ### 5.3 시퀀스 헤더는 왜 특별한가
 
-[`SrsLiveSource::on_video_imp`](../src/app/srs_app_source.cpp#L912)
+[`SrsLiveSource::on_video_imp`](../src/app/srs_app_source.cpp#L1086)
 (원본 `app/srs_app_source.cpp:2408`, audio는
-[on_audio_imp](../src/app/srs_app_source.cpp#L860)가 대칭)가 위의 판별자를 쓰는
+[on_audio_imp](../src/app/srs_app_source.cpp#L1029)가 대칭)가 위의 판별자를 쓰는
 방식이 시퀀스 헤더의 지위를 보여준다:
 
 ```cpp
@@ -376,7 +380,7 @@ flowchart TB
 
 눈여겨볼 것은 **종료가 아니라 순환**이라는 점이다. publisher가 정상 종료하면
 (ffmpeg에 `kill -INT`) FCUnpublish를 보내는데, 서버는
-[`fmle_unpublish`](../src/protocol/srs_protocol_rtmp_stack.cpp#L1970)로 3종 응답
+[`fmle_unpublish`](../src/protocol/srs_protocol_rtmp_stack.cpp#L2185)로 3종 응답
 — onFCUnpublish(NetStream.Unpublish.Success) → FCUnpublish의 `_result` →
 onStatus(NetStream.Unpublish.Success) — 을 보낸 뒤, 연결을 끊는 대신
 `ERROR_CONTROL_REPUBLISH`를 반환한다. 이것은 진짜 에러가 아니라 **제어 흐름
@@ -400,12 +404,12 @@ FCUnpublish → (잠시 후) releaseStream부터 다시 시작한다. connect와
 수명이 다르다는 Part 6 서두의 구분이 코드 구조로 나타난 것이 이 이중 루프다.
 README의 데모 시나리오에서 publisher를 `kill -INT`로 죽였다 다시 붙이면 서버 로그에
 `retry for republish`가 찍히고 접속해 있던 플레이어가 이어서 수신하는 것이 이 경로다
-(utest [FmlePublishLifecycle](../utest/srs_utest_server.cpp#L352)의 후반부가 같은
+(utest [FmlePublishLifecycle](../utest/srs_utest_server.cpp#L403)의 후반부가 같은
 것을 검증한다).
 
 한편 §5의 미디어 팬아웃 경로에서 `source->on_audio/on_video`가 받는 인자는
 `SrsCommonMessage`(수신 측, 단일 소유)인데, 팬아웃 직전에
-[`SrsSharedPtrMessage`로 변환](../src/app/srs_app_source.cpp#L850)된다(refcount
+[`SrsSharedPtrMessage`로 변환](../src/app/srs_app_source.cpp#L1019)된다(refcount
 공유, 페이로드 무복사). 두 메시지 클래스의 분업과 GOP 캐시 알고리즘은 Part 8~9의
 주제이므로 여기서는 이름만 짚어 둔다.
 
@@ -427,7 +431,8 @@ publisher 경로에서 들고 갈 것:
    뒤에만 보낸다 — 먼저 보내면 OBS가 재연결 루프에 빠진다 (#4037)
 4. **미디어 페이로드 = FLV 태그 본문.** 서버의 분류 기준은 첫 1~2바이트가 전부다:
    video는 frame_type|codec_id + AVCPacketType, audio는 SoundFormat 4비트 +
-   AACPacketType. 비트스트림 내부는 열지 않는다
+   AACPacketType. 비트스트림 내부는 열지 않는다 (여는 쪽은 Part 10의 HLS
+   트랜스먹서다)
 5. **시퀀스 헤더와 onMetaData는 "한 번만 오는 것들"이다.** 팬아웃과 별도로
    MetaCache에 보관하고, 시퀀스 헤더는 GOP 캐시에 넣지 않는다 — 나중에 올
    플레이어를 위한 준비다
@@ -443,18 +448,18 @@ onStatus 2종, |RtmpSampleAccess, 그리고 프리필)를 해부하고, 이 파�
 
 _이 글은 [srs_simple](../README.md) 프로젝트의 RTMP 이론 시리즈 Part 7이다.
 코드 대조 기준: srs_simple `src/protocol/srs_protocol_rtmp_stack.{hpp,cpp}`
-(`SrsRtmpServer::start_fmle_publish:1894`, `fmle_unpublish:1970`,
-`start_publishing:2010`, `SrsPublishPacket::decode:2714`,
-`SrsOnStatusCallPacket:2926`, `SrsOnMetaDataPacket::decode:3054`, onStatus 상수
-hpp:69-88), `src/kernel/srs_kernel_codec.{hpp,cpp}`(`SrsFlvVideo::keyframe:12`,
-`sh:27`, `h264:47`, `SrsFlvAudio::sh:68`, `aac:85`),
+(`SrsRtmpServer::start_fmle_publish:2097`, `fmle_unpublish:2185`,
+`start_publishing:2231`, `SrsPublishPacket::decode:3008`,
+`SrsOnStatusCallPacket:3253`, `SrsOnMetaDataPacket::decode:3386`, onStatus 상수
+hpp:69-88), `src/kernel/srs_kernel_codec.{hpp,cpp}`(`SrsFlvVideo::keyframe:19`,
+`sh:34`, `h264:54`, `SrsFlvAudio::sh:75`, `aac:92`),
 `src/app/srs_app_rtmp_conn.cpp`(`service_cycle:122`, `publishing:399`,
 `acquire_publish:418`, `do_publishing:445`, `handle_publish_message:486`,
 `process_publish_message:522`),
-`src/app/srs_app_source.cpp`(`SrsMetaCache::update_data:605`, `on_meta_data:817`,
-`on_audio_imp:860`, `on_video_imp:912`, `on_publish:945`) / 원본 SRS 6.0
+`src/app/srs_app_source.cpp`(`SrsMetaCache::update_data:607`, `on_meta_data:986`,
+`on_audio_imp:1029`, `on_video_imp:1086`, `on_publish:1124`) / 원본 SRS 6.0
 `trunk/src/protocol/srs_protocol_rtmp_stack.cpp:2647`(start_fmle_publish),
 `:2800`(start_publishing, 이슈 #4037), `trunk/src/app/srs_app_rtmp_conn.cpp:925`
 (publishing), `trunk/src/app/srs_app_source.cpp:2408`(on_video_imp).
-실측 시퀀스: `utest/srs_utest_server.cpp`의 `FmlePublishLifecycle:287`,
-`MockRtmpClient::send_media:239`._
+실측 시퀀스: `utest/srs_utest_server.cpp`의 `FmlePublishLifecycle:332`,
+`MockRtmpClient::send_media:277`._

@@ -16,6 +16,8 @@
 > 7. [커맨드 흐름 (2) — publish와 미디어 메시지](part7-publish.md)
 > 8. [커맨드 흐름 (3) — play와 중간 입장 문제](part8-play.md)
 > 9. [(보너스) 서버 내부 — 팬아웃, 캐시, 지터](part9-server-internals.md)
+> 10. [(보너스 2) HLS — 같은 스트림을 HTTP로 배달하기](part10-hls.md)
+> 11. [(보너스 3) LL-HLS — 지연과의 싸움: 파트, 블로킹 리로드, fMP4](part11-llhls.md)
 
 이 글은 Part 2까지 읽었다고 가정한다. 핸드셰이크(Part 2)가 끝난 소켓에는 클라이언트의 첫 청크 — connect 커맨드의 첫 조각 — 가
 도착해 있다. 이 파트는 그 바이트를 메시지로 재조립하는 가운데 층, Part 1에서 예고한
@@ -97,7 +99,7 @@ payload 길이도 대개 같고, timestamp만 일정한 간격(delta)으로 증�
          └─ b & 0x3f                  cs id : 2~63 — 0·1은 확장 마커 (§2.1)
 ```
 
-파싱은 마스크와 시프트 한 번씩이다 ([srs_protocol_rtmp_stack.cpp:645-647](../src/protocol/srs_protocol_rtmp_stack.cpp#L645-L647)):
+파싱은 마스크와 시프트 한 번씩이다 ([srs_protocol_rtmp_stack.cpp:723-725](../src/protocol/srs_protocol_rtmp_stack.cpp#L723-L725)):
 
 ```cpp
 fmt = in_buffer->read_1byte();
@@ -118,7 +120,7 @@ fmt = (fmt >> 6) & 0x03;
 ### 2.1 6비트가 모자랄 때: 2·3바이트 형식
 
 csid 6비트로는 0~63까지만 표현된다. 그래서 **0과 1을 확장 마커로 예약**한다
-([srs_protocol_rtmp_stack.cpp:649-671](../src/protocol/srs_protocol_rtmp_stack.cpp#L649-L671)):
+([srs_protocol_rtmp_stack.cpp:727-756](../src/protocol/srs_protocol_rtmp_stack.cpp#L727-L756)):
 
 ```text
 1바이트 형식   [fmt| 2~63 ]                        csid = 필드값 그대로        (2~63)
@@ -130,7 +132,7 @@ csid 6비트로는 0~63까지만 표현된다. 그래서 **0과 1을 확장 마�
 확장 바이트가 0이 아니라 **64부터 시작**하는 것에 주의 — 0~63은 1바이트 형식으로 이미 표현
 가능하므로 낭비하지 않겠다는 설계다. 그 부작용으로 64~319 구간은 2바이트/3바이트 양쪽으로
 표현 가능하다(스펙도 이를 인정한다 — 코드 위 주석 블록에 스펙 원문이 인용되어 있다,
-[srs_protocol_rtmp_stack.cpp:593-636](../src/protocol/srs_protocol_rtmp_stack.cpp#L593-L636)).
+[srs_protocol_rtmp_stack.cpp:670-713](../src/protocol/srs_protocol_rtmp_stack.cpp#L670-L713)).
 파서는 어느 쪽이든 같은 csid로 수렴시키면 된다.
 
 실전에서 OBS/ffmpeg는 csid를 2~7 범위에서만 쓰므로 2·3바이트 형식을 만날 일은 거의 없지만,
@@ -145,7 +147,7 @@ csid 6비트로는 0~63까지만 표현된다. 그래서 **0과 1을 확장 마�
 ### 3.1 fmt별 필드 배치
 
 basic header에서 fmt를 알았으니 이어지는 message header의 크기가 결정된다. 코드에서 이 결정은
-배열 조회 한 줄이다 ([srs_protocol_rtmp_stack.cpp:747-748](../src/protocol/srs_protocol_rtmp_stack.cpp#L747-L748)):
+배열 조회 한 줄이다 ([srs_protocol_rtmp_stack.cpp:838-839](../src/protocol/srs_protocol_rtmp_stack.cpp#L838-L839)):
 
 ```cpp
 static char mh_sizes[] = {11, 7, 3, 0};
@@ -175,7 +177,7 @@ fmt=3  (0B)   (message header 없음)               delta 포함 전부 → 상�
 두 가지 저수준 디테일이 눈에 띈다. 첫째, **stream_id만 리틀엔디언**이다. RTMP의 다른 모든
 멀티바이트 필드는 빅엔디언인데 이 필드 하나만 반대다 — 스펙이 그렇게 정해 버렸고, 모두가
 따른다. 둘째, 3바이트 timestamp를 int32로 읽는 코드가 특이하다
-([srs_protocol_rtmp_stack.cpp:765-769](../src/protocol/srs_protocol_rtmp_stack.cpp#L765-L769)):
+([srs_protocol_rtmp_stack.cpp:858-862](../src/protocol/srs_protocol_rtmp_stack.cpp#L858-L862)):
 
 ```cpp
 char* pp = (char*)&chunk->header.timestamp_delta;
@@ -191,7 +193,7 @@ pp[3] = 0;
 ### 3.2 `SrsChunkStream` — csid별 기억
 
 차등 인코딩의 "직전"을 기억하는 객체가 `SrsChunkStream`이다
-([srs_protocol_rtmp_stack.hpp:333-358](../src/protocol/srs_protocol_rtmp_stack.hpp#L333-L358)):
+([srs_protocol_rtmp_stack.hpp:349-375](../src/protocol/srs_protocol_rtmp_stack.hpp#L349-L375)):
 
 ```cpp
 class SrsChunkStream
@@ -209,9 +211,9 @@ public:
 
 `SrsProtocol`은 이것을 csid로 인덱싱해 보관한다 —
 `std::map<int, SrsChunkStream*> chunk_streams`
-([srs_protocol_rtmp_stack.hpp:158](../src/protocol/srs_protocol_rtmp_stack.hpp#L158)).
+([srs_protocol_rtmp_stack.hpp:161](../src/protocol/srs_protocol_rtmp_stack.hpp#L161)).
 처음 보는 csid가 오면 그 자리에서 만든다
-([srs_protocol_rtmp_stack.cpp:562-571](../src/protocol/srs_protocol_rtmp_stack.cpp#L562-L571)).
+([srs_protocol_rtmp_stack.cpp:635-645](../src/protocol/srs_protocol_rtmp_stack.cpp#L635-L645)).
 원본은 여기에 "csid < 16이면 map 대신 배열 캐시를 먼저 조회"하는 성능 최적화(`cs_cache`)를
 얹는데, srs_simple은 map만 남겼다 (CLAUDE.md §5.6) — 로직은 동일하다.
 
@@ -227,7 +229,7 @@ if (fmt == RTMP_FMT_TYPE0) {
 }
 ```
 
-([srs_protocol_rtmp_stack.cpp:794-805](../src/protocol/srs_protocol_rtmp_stack.cpp#L794-L805))
+([srs_protocol_rtmp_stack.cpp:888-902](../src/protocol/srs_protocol_rtmp_stack.cpp#L888-L902))
 
 ### 3.3 fmt=3의 이중성 — 연속 청크인가, 새 메시지인가
 
@@ -246,11 +248,11 @@ flowchart TB
 ```
 
 두 경우를 가르는 것이 `is_first_chunk_of_msg = !chunk->msg`
-([srs_protocol_rtmp_stack.cpp:715](../src/protocol/srs_protocol_rtmp_stack.cpp#L715))이다.
+([srs_protocol_rtmp_stack.cpp:800](../src/protocol/srs_protocol_rtmp_stack.cpp#L800))이다.
 조립 중인 메시지가 없는데 fmt=3이 왔다면 새 메시지이고, delta를 적용한다
-([srs_protocol_rtmp_stack.cpp:835-840](../src/protocol/srs_protocol_rtmp_stack.cpp#L835-L840)).
+([srs_protocol_rtmp_stack.cpp:938-942](../src/protocol/srs_protocol_rtmp_stack.cpp#L938-L942)).
 원본 코드의 주석이 이 시나리오를 구체적인 바이트로 박제해 두었다
-([srs_protocol_rtmp_stack.cpp:692-712](../src/protocol/srs_protocol_rtmp_stack.cpp#L692-L712)):
+([srs_protocol_rtmp_stack.cpp:777-797](../src/protocol/srs_protocol_rtmp_stack.cpp#L777-L797)):
 fmt=0로 timestamp=26, delta 없이 온 오디오 뒤에 `0xC4`가 오면 두 번째 메시지의 timestamp는
 26+26=52다. "delta조차 상속된다"는 뜻이다 — fmt=0의 timestamp 필드값(26)이
 `timestamp_delta`에 남아 있다가 재사용된다.
@@ -267,13 +269,13 @@ utest의 `RecvFmt3FreshMessageAppliesDelta`가 정확히 이 주석을 재현한
   `ERROR_RTMP_CHUNK_START`). 상속할 "직전"이 없으니 당연하다. 그런데 예외가 하나 있다 —
   **librtmp는 ping을 fmt=1로 시작**한다(`0x42`). 헤더에 delta/length/type이 다 있으니
   stream_id=0으로 가정하면 파싱이 되므로, 에러 대신 경고만 하고 수용한다
-  ([srs_protocol_rtmp_stack.cpp:719-733](../src/protocol/srs_protocol_rtmp_stack.cpp#L719-L733)).
+  ([srs_protocol_rtmp_stack.cpp:804-822](../src/protocol/srs_protocol_rtmp_stack.cpp#L804-L822)).
   Part 2의 "스펙보다 호환성"이 여기서도 반복된다.
 - **조립 중에는 fmt=0이 올 수 없다** (`chunk->msg && fmt == 0` → 에러,
-  [:737-739](../src/protocol/srs_protocol_rtmp_stack.cpp#L737-L739)). fmt=0은 새 메시지
+  [:826-829](../src/protocol/srs_protocol_rtmp_stack.cpp#L826-L829)). fmt=0은 새 메시지
   선언인데 이전 메시지가 미완성이라면 프로토콜이 깨진 것이다.
 - **조립 중 payload_length 변경 금지** (fmt=1이 다른 length를 들고 오면
-  `ERROR_RTMP_PACKET_SIZE`, [:820-822](../src/protocol/srs_protocol_rtmp_stack.cpp#L820-L822)).
+  `ERROR_RTMP_PACKET_SIZE`, [:918-921](../src/protocol/srs_protocol_rtmp_stack.cpp#L918-L921)).
   이미 `payload_length`만큼 버퍼를 할당해 채우는 중이므로(§5) 길이가 흔들리면 안 된다.
 
 첫째 검사(fmt=3 시작 → 에러, fmt=1 시작 → 경고 후 수용)와 셋째 검사(길이 변경 → 에러)는
@@ -300,11 +302,11 @@ fmt=0 message header (11B)                    extended timestamp (4B)
 ```
 
 수신 코드는 `timestamp_delta >= 0xFFFFFF`이면 `has_extended_timestamp`를 세우고 4바이트를
-추가로 읽는다 ([srs_protocol_rtmp_stack.cpp:784](../src/protocol/srs_protocol_rtmp_stack.cpp#L784),
-[:842-857](../src/protocol/srs_protocol_rtmp_stack.cpp#L842-L857)). 읽은 값은 31비트로
+추가로 읽는다 ([srs_protocol_rtmp_stack.cpp:877](../src/protocol/srs_protocol_rtmp_stack.cpp#L877),
+[:945-965](../src/protocol/srs_protocol_rtmp_stack.cpp#L945-L965)). 읽은 값은 31비트로
 접는다(`&= 0x7fffffff`) — 스펙 본문은 "32비트, 약 50일에 롤오버"라 말하지만 스펙의 예시와
 FLV 스펙은 31비트를 가정하므로, 안전한 교집합인 31비트를 쓴다는 것이 원본 주석의 결론이다
-([srs_protocol_rtmp_stack.cpp:904-924](../src/protocol/srs_protocol_rtmp_stack.cpp#L904-L924)).
+([srs_protocol_rtmp_stack.cpp:1015-1035](../src/protocol/srs_protocol_rtmp_stack.cpp#L1015-L1035)).
 
 여기까지는 지저분하지 않다. 문제는 다음 질문이다: **연속 청크(fmt=3)에도 extended timestamp가
 붙는가?**
@@ -319,7 +321,7 @@ FLV 스펙은 31비트를 가정하므로, 안전한 교집합인 31비트를 �
 
 SRS의 해법은 정직한 휴리스틱이다: **일단 4바이트를 읽어 보고, 직전에 기억해 둔 extended
 timestamp와 값이 다르면 페이로드였다고 판단해 되돌린다**
-([srs_protocol_rtmp_stack.cpp:879-901](../src/protocol/srs_protocol_rtmp_stack.cpp#L879-L901)):
+([srs_protocol_rtmp_stack.cpp:984-1012](../src/protocol/srs_protocol_rtmp_stack.cpp#L984-L1012)):
 
 ```mermaid
 flowchart TB
@@ -378,7 +380,7 @@ be conservative in what you send)의 교과서적 적용이다.
 ### 5.1 페이로드 누적
 
 헤더가 끝나면 페이로드 조각을 모을 차례다. `read_message_payload`는 단순하다
-([srs_protocol_rtmp_stack.cpp:939-979](../src/protocol/srs_protocol_rtmp_stack.cpp#L939-L979)):
+([srs_protocol_rtmp_stack.cpp:1050-1094](../src/protocol/srs_protocol_rtmp_stack.cpp#L1050-L1094)):
 
 ```cpp
 int payload_size = chunk->header.payload_length - chunk->msg->size;  // 남은 양
@@ -407,7 +409,7 @@ if (chunk->header.payload_length == chunk->msg->size) {              // 다 찼�
 `in_chunk_size`의 기본값은 스펙이 정한 128
 ([srs_protocol_rtmp_stack.hpp:35](../src/protocol/srs_protocol_rtmp_stack.hpp#L35))이고,
 상대가 SetChunkSize를 보내면 `on_recv_message`가 갱신한다
-([srs_protocol_rtmp_stack.cpp:1024-1043](../src/protocol/srs_protocol_rtmp_stack.cpp#L1024-L1043)).
+([srs_protocol_rtmp_stack.cpp:1145-1168](../src/protocol/srs_protocol_rtmp_stack.cpp#L1145-L1168)).
 OBS는 접속 직후 4096을 보낸다 — 갱신을 빼먹으면 OBS의 첫 4096바이트 청크에서 재조립이
 어긋난다. SetChunkSize를 포함한 컨트롤 메시지들의 의미는 Part 4의 주제다.
 
@@ -430,7 +432,7 @@ Part 1의 인터리빙 그림이 이 상태 기계에서 어떻게 굴러가는�
 그동안 `chunk_streams[6]->msg`에 얌전히 누워 있다.
 
 이것을 가능하게 하는 호출 구조가 `recv_message`의 루프다
-([srs_protocol_rtmp_stack.cpp:212-248](../src/protocol/srs_protocol_rtmp_stack.cpp#L212-L248)):
+([srs_protocol_rtmp_stack.cpp:219-260](../src/protocol/srs_protocol_rtmp_stack.cpp#L219-L260)):
 `recv_interlaced_message`는 **청크 하나**를 처리하고, 메시지가 완성됐을 때만 msg를 채워 준다.
 완성이 안 됐으면(NULL) 루프가 다음 청크를 계속 읽는다. 완성된 메시지는 `on_recv_message`
 훅을 거친 뒤(자동 Acknowledgement 송신, SetChunkSize/PingRequest 반영 — Part 4) 호출자에게
@@ -447,7 +449,7 @@ Part 1의 인터리빙 그림이 이 상태 기계에서 어떻게 굴러가는�
 대신, 송신 경로에서 "직전 메시지와 뭐가 같은지" 비교하는 상태 관리가 통째로 사라진다.
 
 송신 루프가 그 결정을 그대로 보여준다
-([srs_protocol_rtmp_stack.cpp:275-328](../src/protocol/srs_protocol_rtmp_stack.cpp#L275-L328)):
+([srs_protocol_rtmp_stack.cpp:288-346](../src/protocol/srs_protocol_rtmp_stack.cpp#L288-L346)):
 
 ```cpp
 char* p = msg->payload;
@@ -480,7 +482,7 @@ while (p < pend) {
 
 아웃바운드 청크 크기는 서버가 connect 응답 직전에 SetChunkSize로 60000을 선언하고
 (`_srs_config.chunk_size`, Part 4·6), 자기 선언을 `on_send_packet`이 `out_chunk_size`에
-반영한다 ([srs_protocol_rtmp_stack.cpp:1077-1081](../src/protocol/srs_protocol_rtmp_stack.cpp#L1077-L1081)).
+반영한다 ([srs_protocol_rtmp_stack.cpp:1208-1213](../src/protocol/srs_protocol_rtmp_stack.cpp#L1208-L1213)).
 in과 out이 **독립된 협상**이라는 점을 기억하자 — 서버는 60000으로 보내면서, OBS가 선언한
 4096으로 받는다.
 

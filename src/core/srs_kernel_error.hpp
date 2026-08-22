@@ -64,11 +64,17 @@ enum SrsErrorCode
     ERROR_CONTROL_RTMP_CLOSE = 2998,
     ERROR_CONTROL_REPUBLISH = 2999,
 
-    // The HLS/HTTP error (S10).
+    // The HLS/HTTP error (S10, HTTP는 S15에서 부활 — CLAUDE.md §5.6 S11/S15).
     ERROR_HLS_DECODE_ERROR = 3001,
     ERROR_HLS_CREATE_DIR = 3002,
     ERROR_HLS_AVC_SAMPLE_SIZE = 3006,
     ERROR_HTTP_PARSE_HEADER = 3009,
+
+    // The MP4 error (S12 fMP4).
+    ERROR_MP4_ILLEGAL_MOOF = 3089,
+
+    // The AVC bitstream error (S16 SPS 해상도 파싱 — 값은 원본과 동일).
+    ERROR_AVC_NALU_UEV = 4027,
 
     // For user-define error.
     ERROR_USER_DISCONNECT = 9001,

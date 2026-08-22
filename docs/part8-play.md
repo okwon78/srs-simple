@@ -16,6 +16,8 @@
 > 7. [커맨드 흐름 (2) — publish와 미디어 메시지](part7-publish.md)
 > 8. **커맨드 흐름 (3) — play와 중간 입장 문제** (이 글)
 > 9. [(보너스) 서버 내부 — 팬아웃, 캐시, 지터](part9-server-internals.md)
+> 10. [(보너스 2) HLS — 같은 스트림을 HTTP로 배달하기](part10-hls.md)
+> 11. [(보너스 3) LL-HLS — 지연과의 싸움: 파트, 블로킹 리로드, fMP4](part11-llhls.md)
 
 이 글은 Part 7까지 읽었다고 가정한다.
 
@@ -68,9 +70,9 @@ Part 6의 `identify_client`는 connect 다음에 오는 커맨드를 보고 클�
 판별하는 상태 기계였다. publisher는 releaseStream을 먼저 보내므로 그 자리에서 FMLE로
 판정됐지만, player가 connect 다음에 보내는 것은 **createStream**이다.
 createStream만으로는 정체를 알 수 없다 — publish도 play도 그 뒤에 오기 때문이다. 그래서
-[`identify_client`](../src/protocol/srs_protocol_rtmp_stack.cpp#L1762)는
+[`identify_client`](../src/protocol/srs_protocol_rtmp_stack.cpp#L1948)는
 createStream을 만나면
-[`identify_create_stream_client`](../src/protocol/srs_protocol_rtmp_stack.cpp#L2031)로
+[`identify_create_stream_client`](../src/protocol/srs_protocol_rtmp_stack.cpp#L2254)로
 들어가 **`_result(streamId=1)`를 먼저 보내 놓고, 다음 커맨드를 계속 기다린다**:
 
 ```mermaid
@@ -85,7 +87,7 @@ flowchart TB
 
 재귀 깊이 3의 가드는 createStream을 여러 번 보내는 클라이언트(일부 Flash 앱)를
 수용하되 무한 재귀를 막는 안전판이다. play가 도착하면
-[`identify_play_client`](../src/protocol/srs_protocol_rtmp_stack.cpp#L2121)는
+[`identify_play_client`](../src/protocol/srs_protocol_rtmp_stack.cpp#L2357)는
 판별식이랄 것도 없다 — type과 stream_name, duration을 채우고 끝난다.
 
 ### 1.1 SrsPlayPacket — 응답 없는 커맨드
@@ -111,10 +113,10 @@ play 커맨드의 페이로드를 바이트로 보면 (sid=1, csid 5로 온다 �
 선택 필드 셋은 Flash 시대의 VOD 유산이다. 스펙상 **start**는 -2(라이브 있으면
 라이브, 없으면 녹화본), -1(라이브만), 0 이상(녹화본의 초 단위 오프셋)을 구분하고
 **duration**은 재생 길이 제한, **reset**은 이전 재생목록 플러시 여부다.
-[`SrsPlayPacket::decode`](../src/protocol/srs_protocol_rtmp_stack.cpp#L2804)는
-스트림 이름까지 읽은 뒤 [`stream->empty()`가 아닐 때만](../src/protocol/srs_protocol_rtmp_stack.cpp#L2827)
+[`SrsPlayPacket::decode`](../src/protocol/srs_protocol_rtmp_stack.cpp#L3107)는
+스트림 이름까지 읽은 뒤 [`stream->empty()`가 아닐 때만](../src/protocol/srs_protocol_rtmp_stack.cpp#L3135)
 나머지를 읽는다 — 클라이언트마다 어디까지 보내는지 제각각이기 때문이다. reset은
-[Boolean으로도 Number로도 온다](../src/protocol/srs_protocol_rtmp_stack.cpp#L2843)
+[Boolean으로도 Number로도 온다](../src/protocol/srs_protocol_rtmp_stack.cpp#L3155)
 (스펙이 "Boolean 또는 Number"라고 적어 둔 흔치 않은 정직함). 라이브 전용 서버인
 srs_simple은 셋 다 읽기만 하고 쓰지 않는다 — 원본의 duration 제한 재생도 S8에서
 제거했다 (CLAUDE.md §5.6).
@@ -124,14 +126,14 @@ srs_simple은 셋 다 읽기만 하고 쓰지 않는다 — 원본의 duration �
 ## 2. 서버 응답 5연타 — start_play
 
 identify가 끝나면 [`stream_service_cycle`](../src/app/srs_app_rtmp_conn.cpp#L244)이
-[`rtmp->start_play(stream_id)`](../src/protocol/srs_protocol_rtmp_stack.cpp#L1830)
+[`rtmp->start_play(stream_id)`](../src/protocol/srs_protocol_rtmp_stack.cpp#L2025)
 (원본 `protocol/srs_protocol_rtmp_stack.cpp:2519`)를 호출한다. Part 7의
 `start_fmle_publish`가 문답 시퀀스였다면 start_play는 일방 통보 4연발 + 프리필이다.
 하나씩 보자.
 
 **① UserControl StreamBegin(1)** — Part 4에서 본 컨트롤 메시지다. event_data에
 "시작되는 스트림"의 sid(1)를 싣지만, 패킷 자체는
-[`send_and_free_packet(pkt, 0)`](../src/protocol/srs_protocol_rtmp_stack.cpp#L1839)
+[`send_and_free_packet(pkt, 0)`](../src/protocol/srs_protocol_rtmp_stack.cpp#L2035)
 — **stream_id=0**으로 보낸다. 헷갈리기 쉬운 지점이라 표로 박아 두자:
 
 | 응답 | message stream_id | 이유 |
@@ -162,17 +164,17 @@ Flash Player 보안 모델의 유산으로, ActionScript의 `BitmapData.draw()` 
 비디오 프레임의 픽셀을 읽어도 되는지(sample access)를 서버가 허가하는 신호였다.
 ffplay/VLC는 무시한다. 원본 주석 스타일대로라면 (false,false)가 기본이지만 SRS는
 [이슈 #49](https://github.com/ossrs/srs/issues/49) 이래 둘 다 true로 보내고,
-srs_simple의 [`SrsSampleAccessPacket`](../src/protocol/srs_protocol_rtmp_stack.cpp#L2991)도
-[같은 값을 따른다](../src/protocol/srs_protocol_rtmp_stack.cpp#L1880).
+srs_simple의 [`SrsSampleAccessPacket`](../src/protocol/srs_protocol_rtmp_stack.cpp#L3321)도
+[같은 값을 따른다](../src/protocol/srs_protocol_rtmp_stack.cpp#L2082).
 
 **⑤가 없다?** — 원본과 srs_simple 모두 `start_play`는 여기서 끝난다.
-[함수 끝의 주석](../src/protocol/srs_protocol_rtmp_stack.cpp#L1888)이 "스펙 vs
+[함수 끝의 주석](../src/protocol/srs_protocol_rtmp_stack.cpp#L2091)이 "스펙 vs
 현실"의 좋은 예다: 스펙 계열 문서들이 언급하는 onStatus(NetStream.Data.Start)를
 보내면 **ffmpeg가 빈 데이터 스트림("Stream #0:0: Data: none")을 만들어 버려서**
 일부러 보내지 않는다. 다이어그램의 다섯 번째 줄 — onMetaData부터 시작하는 프리필 —
 은 커맨드 시퀀스가 아니라 다음 절부터의 주인공, 캐시 재생분이다.
 
-utest의 [PlayBootstrap](../utest/srs_utest_server.cpp#L385)이 이 시퀀스를
+utest의 [PlayBootstrap](../utest/srs_utest_server.cpp#L436)이 이 시퀀스를
 실소켓으로 검증한다: createStream → play를 보내고, StreamBegin(event_data=1,
 stream_id=0)과 onStatus(Play.Reset을 지나 Play.Start)를 순서대로 받는다.
 
@@ -216,11 +218,11 @@ err = do_playing(source, consumer);     // ③ 송신 루프 (§7)
 srs_freep(consumer);                    //    소멸자가 팬아웃 대상에서 제거
 ```
 
-[`create_consumer`](../src/app/srs_app_source.cpp#L997)는 이 연결 전용
+[`create_consumer`](../src/app/srs_app_source.cpp#L1185)는 이 연결 전용
 `SrsLiveConsumer`(개인 재생 큐 + 개인 지터)를 만들어 소스의 consumers 목록에 넣는다.
 이 순간부터 publisher가 미는 모든 메시지가 이 큐에도 복사(refcount만 증가 —
 Part 9)되기 시작한다. 그리고
-[`consumer_dumps`](../src/app/srs_app_source.cpp#L1009)
+[`consumer_dumps`](../src/app/srs_app_source.cpp#L1197)
 (원본 `app/srs_app_source.cpp:2703`)가 §3의 세 결핍을 한 번에 채운다:
 
 ```cpp
@@ -244,11 +246,12 @@ if (active) {
 주입 순서는 고정이고, 각 순서에 이유가 있다:
 
 - **onMetaData가 맨 앞**: 스트림의 명함이 미디어보다 먼저 —
-  [`SrsMetaCache::dumps`](../src/app/srs_app_source.cpp#L582)
+  [`SrsMetaCache::dumps`](../src/app/srs_app_source.cpp#L584)
   (원본 :1626)의 첫 enqueue
-- **AAC 시퀀스 헤더를 AVC보다 먼저**: [원본 이슈 #301](../src/app/srs_app_source.cpp#L592)
+- **AAC 시퀀스 헤더를 AVC보다 먼저**: [원본 이슈 #301](../src/app/srs_app_source.cpp#L595)
   — HLS 리먹서가 스트림 앞부분만 보고 오디오 코덱을 판별할 수 있도록 굳어진 순서다.
-  srs_simple에는 HLS가 없지만 순서를 그대로 보존했다. utest
+  (srs_simple의 HLS(Part 10)는 consumer 큐가 아니라 팬아웃 앞의 허브에서 프레임을
+  받으므로 이 순서에 기대지 않지만, 순서는 원본 그대로 보존했다.) utest
   [MetaCacheDumpsOrder](../utest/srs_utest_source.cpp#L173)가 검증하는 것이 이것이다
 - **GOP는 시퀀스 헤더 뒤에**: 디코더 초기화(sh) 없이 프레임(GOP)부터 오면 §3-2의
   결핍이 재현된다
@@ -270,7 +273,7 @@ publish하지 않은 스트림에 플레이어가 먼저 접속하면(대기 시
 
 ## 5. GopCache 알고리즘 — 항상 [마지막 키프레임 .. 현재]
 
-[`SrsGopCache::cache`](../src/app/srs_app_source.cpp#L439)
+[`SrsGopCache::cache`](../src/app/srs_app_source.cpp#L441)
 (원본 `app/srs_app_source.cpp:611`)는 publisher의 모든 미디어 메시지마다 불리지만,
 알고리즘의 뼈대는 세 줄로 요약된다:
 
@@ -309,13 +312,13 @@ publisher가 미는 순서 →
   MetaCache로 보내고 GOP 캐시 앞에서 `return`한다. sh가 GOP에 섞이면 키프레임
   clear에 쓸려 나가 유실되거나 프리필에 중복 주입된다. "설정은 MetaCache, 프레임은
   GopCache" (CLAUDE.md §5.3 규칙 6)
-- **pure audio 가드**: 비디오가 한 번도 안 왔으면([`pure_audio()`](../src/app/srs_app_source.cpp#L545))
+- **pure audio 가드**: 비디오가 한 번도 안 왔으면([`pure_audio()`](../src/app/srs_app_source.cpp#L547))
   캐시하지 않고, 캐시하다가도 마지막 비디오 이후 오디오만
-  [`SRS_PURE_AUDIO_GUESS_COUNT`(115개 ≈ 3초)](../src/app/srs_app_source.cpp#L472)를
+  [`SRS_PURE_AUDIO_GUESS_COUNT`(115개 ≈ 3초)](../src/app/srs_app_source.cpp#L474)를
   넘기면 "비디오가 끊겼다"고 추정하고 캐시를 비운다. 키프레임 clear가 다시 오지 않는
   스트림에서 캐시가 무한히 자라는 것을 막는 휴리스틱이다
   ([GopCachePureAudio](../utest/srs_utest_source.cpp#L159))
-- **프레임 수 상한**: 그래도 캐시가 [`gop_cache_max_frames_`](../src/app/srs_app_source.cpp#L490)
+- **프레임 수 상한**: 그래도 캐시가 [`gop_cache_max_frames_`](../src/app/srs_app_source.cpp#L492)
   (기본 2500)를 넘으면 — 키프레임을 아예 안 보내는 비정상 인코더 — 경고를 찍고 비운다
 
 ---
@@ -330,8 +333,8 @@ publisher 타임라인의 **30초 근방**이다. 이걸 그대로 보내면 새
 타임스탬프에서 멈추거나 버벅인다.
 
 그래서 consumer의 재생 큐로 들어가는 모든 메시지는
-[`SrsLiveConsumer::enqueue`](../src/app/srs_app_source.cpp#L319) 안에서
-[`SrsRtmpJitter::correct`](../src/app/srs_app_source.cpp#L48)
+[`SrsLiveConsumer::enqueue`](../src/app/srs_app_source.cpp#L321) 안에서
+[`SrsRtmpJitter::correct`](../src/app/srs_app_source.cpp#L50)
 (원본 `app/srs_app_source.cpp:74-132`)를 통과한다. 핵심 아이디어는 하나다: **입력
 타임스탬프의 절대값을 믿지 않는다.** 연속 메시지 사이의 델타만 취하고, 그 델타가
 비정상(±250ms 초과 — 재-publish 점프, 시계 역행)이면 10ms로 클램프한 뒤,
@@ -362,7 +365,7 @@ while (true) {
 ```
 
 **②~④가 SRS의 merged-write(MW) 전략이다.** 메시지가 하나 생길 때마다 write하지
-않고, [`consumer->wait`](../src/app/srs_app_source.cpp#L381)로 "128개 초과 **그리고**
+않고, [`consumer->wait`](../src/app/srs_app_source.cpp#L383)로 "128개 초과 **그리고**
 350ms치 초과"([SRS_PERF_MW_SLEEP](../src/app/srs_app_rtmp_conn.cpp#L38))가 둘 다
 쌓일 때까지 기다렸다가 몰아서 보낸다. 시스템 콜 횟수를 줄여 수천 플레이어를 감당하는
 원본의 처리량 최적화인데, 대가로 최대 350ms의 서버 측 지연이 붙는다 — GOP 캐시와
@@ -423,20 +426,20 @@ Part 1~8이 메커니즘이었다면 마지막 파트는 그 위의 정책이다
 
 _이 글은 [srs_simple](../README.md) 프로젝트의 RTMP 이론 시리즈 Part 8이다.
 코드 대조 기준: srs_simple `src/protocol/srs_protocol_rtmp_stack.{hpp,cpp}`
-(`SrsRtmpServer::identify_client:1762`, `identify_create_stream_client:2031`,
-`identify_play_client:2121`, `start_play:1830`, `SrsPlayPacket::decode:2804`,
-`SrsSampleAccessPacket:2991`, onStatus 상수 hpp:80-88),
+(`SrsRtmpServer::identify_client:1948`, `identify_create_stream_client:2254`,
+`identify_play_client:2357`, `start_play:2025`, `SrsPlayPacket::decode:3107`,
+`SrsSampleAccessPacket:3321`, onStatus 상수 hpp:80-88),
 `src/app/srs_app_rtmp_conn.cpp`(`stream_service_cycle:199`, `playing:272`,
 `do_playing:300`, `process_play_control_msg:374`),
-`src/app/srs_app_source.cpp`(`SrsRtmpJitter::correct:48`,
-`SrsLiveConsumer::enqueue:319`, `dump_packets:352`, `wait:381`,
-`SrsGopCache::cache:439`, `dump:512`, `SrsMetaCache::dumps:582`,
-`create_consumer:997`, `consumer_dumps:1009`) / 원본 SRS 6.0
+`src/app/srs_app_source.cpp`(`SrsRtmpJitter::correct:50`,
+`SrsLiveConsumer::enqueue:321`, `dump_packets:354`, `wait:383`,
+`SrsGopCache::cache:441`, `dump:514`, `SrsMetaCache::dumps:584`,
+`create_consumer:1185`, `consumer_dumps:1197`) / 원본 SRS 6.0
 `trunk/src/protocol/srs_protocol_rtmp_stack.cpp:2519`(start_play),
 `trunk/src/app/srs_app_rtmp_conn.cpp:702`(playing),
 `trunk/src/app/srs_app_source.cpp:2703`(consumer_dumps), `:611/686`(GopCache
 cache/dump, 키프레임 clear는 :653), `:1626`(MetaCache::dumps, audio 우선은 :1636),
 `:74-132`(jitter).
-실측 시퀀스: `utest/srs_utest_server.cpp`의 `PlayBootstrap:385`,
+실측 시퀀스: `utest/srs_utest_server.cpp`의 `PlayBootstrap:438`,
 `utest/srs_utest_source.cpp`의 `LiveSourceFanoutAndMidJoin:231`,
 `MetaCacheDumpsOrder:173`, `GopCacheClearOnKeyframe:128`, `GopCachePureAudio:159`._

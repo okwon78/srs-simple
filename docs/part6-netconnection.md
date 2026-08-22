@@ -16,6 +16,8 @@
 > 7. [커맨드 흐름 (2) — publish와 미디어 메시지](part7-publish.md)
 > 8. [커맨드 흐름 (3) — play와 중간 입장 문제](part8-play.md)
 > 9. [(보너스) 서버 내부 — 팬아웃, 캐시, 지터](part9-server-internals.md)
+> 10. [(보너스 2) HLS — 같은 스트림을 HTTP로 배달하기](part10-hls.md)
+> 11. [(보너스 3) LL-HLS — 지연과의 싸움: 파트, 블로킹 리로드, fMP4](part11-llhls.md)
 
 이 글은 Part 5까지 읽었다고 가정한다.
 
@@ -81,11 +83,11 @@ type 20(AMF0 command) 메시지의 페이로드는 예외 없이 이 꼴이다:
 그럼 `_result`가 도착했을 때 이것이 **무슨 요청에 대한** 응답인지 어떻게 아는가?
 페이로드에 남은 단서는 transaction id 하나다. 그래서 커맨드를 **보내는 쪽**은
 "tid → 보낸 커맨드 이름" 맵을 유지해야 한다. srs_simple의 `SrsProtocol`이 가진
-[`requests` 맵](../src/protocol/srs_protocol_rtmp_stack.hpp#L178)이 그것이다.
+[`requests` 맵](../src/protocol/srs_protocol_rtmp_stack.hpp#L181)이 그것이다.
 
-- 송신 시 기록: [`on_send_packet`](../src/protocol/srs_protocol_rtmp_stack.cpp#L1088)이
+- 송신 시 기록: [`on_send_packet`](../src/protocol/srs_protocol_rtmp_stack.cpp#L1220)이
   connect/createStream/releaseStream류 패킷을 보낼 때 `requests[tid] = 커맨드 이름`을 남긴다
-- 수신 시 조회: [`do_decode_message`](../src/protocol/srs_protocol_rtmp_stack.cpp#L395)가
+- 수신 시 조회: [`do_decode_message`](../src/protocol/srs_protocol_rtmp_stack.cpp#L421)가
   `_result`/`_error`를 만나면 tid를 먼저 읽고, `requests`에서 원래 커맨드 이름을 찾아
   그에 맞는 응답 패킷 클래스(`SrsConnectAppResPacket` 등)로 디코드한다. 맵에 없으면
   `ERROR_RTMP_NO_REQUEST` — 응답만으로는 타입을 알 수 없기 때문이다
@@ -93,12 +95,12 @@ type 20(AMF0 command) 메시지의 페이로드는 예외 없이 이 꼴이다:
 서버 입장에서는 이 맵을 쓸 일이 거의 없다. 서버는 요청을 받고 응답하는 쪽이라,
 받은 요청의 tid를 그대로 에코해 `_result`를 만들면 끝이다. srs_simple에서 이 맵을
 실제로 쓰는 것은 **클라이언트 역할**을 하는 utest다 —
-[MockRtmpClient](../utest/srs_utest_server.cpp#L88)가 connect를 보내고
+[MockRtmpClient](../utest/srs_utest_server.cpp#L96)가 connect를 보내고
 `expect_message<SrsConnectAppResPacket>`으로 응답을 기다릴 때, 위의 두 경로가
 맞물려 돌아간다 (CLAUDE.md §5.6 S6이 `requests`와 `_result` 디코드 경로를 남긴 이유).
 
 한 가지 더: 커맨드를 기다리는 쪽의 관용구가
-[`expect_message<T>`](../src/protocol/srs_protocol_rtmp_stack.hpp#L261)다.
+[`expect_message<T>`](../src/protocol/srs_protocol_rtmp_stack.hpp#L269)다.
 "T 타입 패킷이 나올 때까지 메시지를 받아 디코드하고, 다른 타입은 조용히 버린다" —
 이번 파트 내내 서버 코드에 반복해서 등장한다.
 
@@ -125,18 +127,18 @@ player형 클라이언트(ffplay 등)는 여기에 fpad/capabilities/audioCodecs
 videoFunction(사실상 무시됨)과 objectEncoding(0=AMF0, 3=AMF3)을 더 실어 보낸다.
 
 서버 쪽 수신 코드는
-[`SrsRtmpServer::connect_app`](../src/protocol/srs_protocol_rtmp_stack.cpp#L1648)
+[`SrsRtmpServer::connect_app`](../src/protocol/srs_protocol_rtmp_stack.cpp#L1824)
 (원본 `protocol/srs_protocol_rtmp_stack.cpp:2244`)이다. 하는 일은 단순하다:
 `expect_message<SrsConnectAppPacket>`으로 connect를 기다리고, command object에서
 **tcUrl(필수 — 없으면 `ERROR_RTMP_REQ_CONNECT`)**, pageUrl/swfUrl/objectEncoding
 (선택)을 꺼내 `SrsRequest`에 담은 뒤, tcUrl을 파싱한다.
 
-[`SrsRequest`](../src/protocol/srs_protocol_rtmp_stack.hpp#L362)는 이 연결의
+[`SrsRequest`](../src/protocol/srs_protocol_rtmp_stack.hpp#L379)는 이 연결의
 신원 그 자체다 — tcUrl에서 파생된 schema/host/vhost/app/stream/port/param이 모두
 여기 모이고, Part 8에서 볼 스트림 허브의 키(`vhost/app/stream`)도 여기서 나온다.
 
 디코드 쪽 디테일 하나
-([`SrsConnectAppPacket::decode`](../src/protocol/srs_protocol_rtmp_stack.cpp#L2145)):
+([`SrsConnectAppPacket::decode`](../src/protocol/srs_protocol_rtmp_stack.cpp#L2381)):
 command object 뒤에 값이 더 남아 있으면 args로 읽되, **Object가 아니면 버린다**.
 어떤 클라이언트는 여기에 문자열 따위를 넣어 보내기 때문이다(원본 이슈 #186).
 tid도 1이 아니면 경고만 하고 진행한다 — "스펙대로 안 보내는 클라이언트가 실존한다"는
@@ -205,7 +207,7 @@ SetChunkSize를 먼저 보내지 않으면 응답이 여러 청크로 쪼개지�
 [srs_app_rtmp_conn.cpp:140](../src/app/srs_app_rtmp_conn.cpp#L140)의 주석).
 
 `_result` 자체는
-[`SrsRtmpServer::response_connect_app`](../src/protocol/srs_protocol_rtmp_stack.cpp#L1725)
+[`SrsRtmpServer::response_connect_app`](../src/protocol/srs_protocol_rtmp_stack.cpp#L1909)
 (원본 :2319)이 만든다. `SrsConnectAppResPacket`의 페이로드는 tid=1 에코 뒤에
 **Object 두 개**가 연달아 온다:
 
@@ -238,9 +240,9 @@ connect가 성공하면 연결은 열렸지만, 아직 미디어가 흐를 통�
 그 통로 — **message stream id** — 를 발급받는 커맨드다.
 
 패킷은 시리즈 전체에서 가장 단순하다.
-[`SrsCreateStreamPacket`](../src/protocol/srs_protocol_rtmp_stack.cpp#L2361)은
+[`SrsCreateStreamPacket`](../src/protocol/srs_protocol_rtmp_stack.cpp#L2626)은
 이름+tid+Null, 응답
-[`SrsCreateStreamResPacket`](../src/protocol/srs_protocol_rtmp_stack.cpp#L2431)은
+[`SrsCreateStreamResPacket`](../src/protocol/srs_protocol_rtmp_stack.cpp#L2702)은
 `_result`+tid+Null+**stream id(number)**. 25바이트와 29바이트라 손으로 다 읽을 수
 있다 (마커 복습은 Part 5):
 
@@ -258,7 +260,7 @@ connect가 성공하면 연결은 열렸지만, 아직 미디어가 흐를 통�
 ```
 
 srs_simple의 서버는 항상 **sid=1**을 발급한다
-([`SrsResponse`](../src/protocol/srs_protocol_rtmp_stack.hpp#L416)의 `stream_id`,
+([`SrsResponse`](../src/protocol/srs_protocol_rtmp_stack.hpp#L437)의 `stream_id`,
 연결당 스트림 1개). 이 1이라는 숫자의 의미를 Part 1의 구분으로 재확인하자:
 
 - **csid**(chunk stream id)는 **전송** 축이다 — 청크 헤더에 실리고, 큰 메시지가
@@ -292,9 +294,9 @@ Encoder)** — Adobe의 방송 송출 프로그램 — 가 만든 관례이고, 
 
 구현 디테일: 세 커맨드 releaseStream/FCPublish/FCUnpublish는 페이로드 구조가
 `이름 + tid + Null + 스트림이름(string)`으로 완전히 같다. 그래서 패킷 클래스도
-[`SrsFMLEStartPacket`](../src/protocol/srs_protocol_rtmp_stack.cpp#L2514) 하나가
-셋을 겸하고, decode가 [세 이름을 모두 허용](../src/protocol/srs_protocol_rtmp_stack.cpp#L2522)한다.
-응답 [`SrsFMLEStartResPacket`](../src/protocol/srs_protocol_rtmp_stack.cpp#L2604)의
+[`SrsFMLEStartPacket`](../src/protocol/srs_protocol_rtmp_stack.cpp#L2793) 하나가
+셋을 겸하고, decode가 [세 이름을 모두 허용](../src/protocol/srs_protocol_rtmp_stack.cpp#L2802)한다.
+응답 [`SrsFMLEStartResPacket`](../src/protocol/srs_protocol_rtmp_stack.cpp#L2890)의
 페이로드는 `_result + tid + Null + Undefined` — Part 5에서 "Undefined 마커(0x06)가
 실전에서 쓰이는 곳"이라 예고했던 지점이 바로 여기다.
 
@@ -305,7 +307,7 @@ Encoder)** — Adobe의 방송 송출 프로그램 — 가 만든 관례이고, 
 connect까지는 publisher와 player의 대화가 똑같다. RTMP에는 "나는 송출자다"라고
 선언하는 필드가 없으므로, 서버는 **connect 이후에 무슨 커맨드가 오는지를 보고**
 클라이언트의 의도를 알아내야 한다. 그 상태 기계가
-[`SrsRtmpServer::identify_client`](../src/protocol/srs_protocol_rtmp_stack.cpp#L1762)
+[`SrsRtmpServer::identify_client`](../src/protocol/srs_protocol_rtmp_stack.cpp#L1948)
 (원본 :2440)다.
 
 ```mermaid
@@ -339,11 +341,11 @@ flowchart TB
 
 - **ffmpeg/OBS publisher**: 첫 커맨드가 releaseStream이므로 즉시
   `SrsRtmpConnFMLEPublish`로 판별된다
-  ([`identify_fmle_publish_client`](../src/protocol/srs_protocol_rtmp_stack.cpp#L2095)
+  ([`identify_fmle_publish_client`](../src/protocol/srs_protocol_rtmp_stack.cpp#L2329)
   — releaseStream의 `_result`까지 보내고 반환). 시퀀스의 나머지(FCPublish부터)는
   Part 7의 `start_fmle_publish`가 이어받는다
 - **ffplay/VLC player**: 첫 커맨드가 createStream이므로
-  [`identify_create_stream_client`](../src/protocol/srs_protocol_rtmp_stack.cpp#L2031)로
+  [`identify_create_stream_client`](../src/protocol/srs_protocol_rtmp_stack.cpp#L2254)로
   들어간다. 여기서 먼저 `_result(sid=1)`를 응답하고 — createStream에 답하지 않으면
   클라이언트는 다음 커맨드를 보내지 않는다 — 다시 커맨드를 기다린다. play가 오면
   `SrsRtmpConnPlay`. 스트림 이름과 duration은 play 커맨드에서 나온다
@@ -371,7 +373,7 @@ tcUrl을 재파싱(§2.1)하고, vhost/app/stream 키로 스트림 허브(`SrsLi
 
 원본 SRS는 이런 커맨드를 `SrsCallPacket`(RPC 일반형)으로 받아 null `_result`를
 돌려준다. srs_simple은 `SrsCallPacket`을 제거했으므로
-[`do_decode_message`의 마지막 분기](../src/protocol/srs_protocol_rtmp_stack.cpp#L467)가
+[`do_decode_message`의 마지막 분기](../src/protocol/srs_protocol_rtmp_stack.cpp#L520)가
 기본 `SrsPacket`으로 받아 **그냥 버린다** (CLAUDE.md §5.6 S6).
 
 이래도 되는 이유가 RTMP의 성격을 잘 보여준다. 커맨드의 요청-응답은 동기 RPC가
@@ -411,11 +413,11 @@ audio(8)/video(9) 메시지의 FLV 태그 구조 — 를 해부한다.
 
 _이 글은 [srs_simple](../README.md) 프로젝트의 RTMP 이론 시리즈 Part 6이다.
 코드 대조 기준: srs_simple `src/protocol/srs_protocol_rtmp_stack.{hpp,cpp}`
-(`SrsRtmpServer::connect_app:1648`, `response_connect_app:1725`,
-`identify_client:1762`, `identify_create_stream_client:2031`,
-`identify_fmle_publish_client:2095`, `SrsConnectAppPacket::decode:2145`,
-`SrsCreateStreamPacket:2361`, `SrsFMLEStartPacket:2514`, `_result` 디코드
-`do_decode_message:395`, `requests` 등록 `on_send_packet:1068`),
+(`SrsRtmpServer::connect_app:1824`, `response_connect_app:1909`,
+`identify_client:1948`, `identify_create_stream_client:2254`,
+`identify_fmle_publish_client:2329`, `SrsConnectAppPacket::decode:2381`,
+`SrsCreateStreamPacket:2626`, `SrsFMLEStartPacket:2793`, `_result` 디코드
+`do_decode_message:421`, `requests` 등록 `on_send_packet:1196`),
 `src/protocol/srs_protocol_utility.cpp`(`srs_discovery_tc_url:36`),
 `src/app/srs_app_rtmp_conn.cpp`(`do_cycle:89`, `service_cycle:122`,
 `stream_service_cycle:199`) / 원본 SRS 6.0
