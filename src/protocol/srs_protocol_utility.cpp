@@ -44,11 +44,11 @@ void srs_discovery_tc_url(string tcUrl, string& schema, string& host, string& vh
 
     // Standard URL is:
     //      rtmp://ip/app/app2/stream?k=v
-    // Where after last slash is stream.
+    // Where the part after the last slash is the stream.
     fullUrl += stream.empty() ? "/" : (stream.at(0) == '/' ? stream : "/" + stream);
     fullUrl += param.empty() ? "" : (param.at(0) == '?' ? param : "?" + param);
 
-    // First, we covert the FMLE URL to standard URL:
+    // First, we convert the FMLE URL to a standard URL:
     //      rtmp://ip/app/app2?k=v/stream , or:
     //      rtmp://ip/app/app2#k=v/stream
     size_t pos_query = fullUrl.find_first_of("?#");
@@ -59,7 +59,7 @@ void srs_discovery_tc_url(string tcUrl, string& schema, string& host, string& vh
                   + fullUrl.substr(pos_query, pos_rslash - pos_query); // ?k=v
     }
 
-    // Remove the _definst_ of FMLE URL.
+    // Remove the _definst_ from the FMLE URL.
     if (fullUrl.find("/_definst_") != string::npos) {
         fullUrl = srs_string_replace(fullUrl, "/_definst_", "");
     }
@@ -98,7 +98,7 @@ void srs_discovery_tc_url(string tcUrl, string& schema, string& host, string& vh
         path = path.substr(0, pos);
     }
 
-    // After last slash of path is stream, before is app.
+    // After the last slash of the path is the stream, before it is the app.
     if ((pos = path.rfind("/")) != string::npos) {
         stream = path.substr(pos + 1);
         app = path.substr(0, pos);
@@ -112,7 +112,7 @@ void srs_discovery_tc_url(string tcUrl, string& schema, string& host, string& vh
 
     param = query.empty() ? "" : "?" + query;
 
-    // Try to parse vhost from query, or use host if not specified.
+    // Try to parse the vhost from the query, or use the host if not specified.
     string vhost_in_query = srs_query_get_by_key(query, "vhost");
     if (vhost_in_query.empty()) {
         vhost_in_query = srs_query_get_by_key(query, "domain");

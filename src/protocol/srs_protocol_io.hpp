@@ -21,15 +21,15 @@
  *                                    실소켓(SrsStSocket)과 utest(MockBufferIO)가 구현한다.
  */
 
-// Get the statistic of channel.
+// Get the statistics of the channel.
 class ISrsProtocolStatistic
 {
 public:
     virtual ~ISrsProtocolStatistic() {}
 public:
-    // Get the total recv bytes over underlay fd.
+    // Get the total recv bytes over the underlying fd.
     virtual int64_t get_recv_bytes() = 0;
-    // Get the total send bytes over underlay fd.
+    // Get the total send bytes over the underlying fd.
     virtual int64_t get_send_bytes() = 0;
 };
 
@@ -40,15 +40,15 @@ public:
     virtual ~ISrsProtocolReader() {}
 // For protocol
 public:
-    // Set the timeout tm in srs_utime_t for recv bytes from peer.
+    // Set the timeout tm in srs_utime_t for receiving bytes from the peer.
     // @remark Use SRS_UTIME_NO_TIMEOUT to never timeout.
     virtual void set_recv_timeout(srs_utime_t tm) = 0;
-    // Get the timeout in srs_utime_t for recv bytes from peer.
+    // Get the timeout in srs_utime_t for receiving bytes from the peer.
     virtual srs_utime_t get_recv_timeout() = 0;
 // For handshake.
 public:
-    // Read specified size bytes of data.
-    // @param nread, the actually read size, NULL to ignore.
+    // Read the specified number of bytes of data.
+    // @param nread, the actual read size, NULL to ignore.
     virtual srs_error_t read_fully(void* buf, size_t size, ssize_t* nread) = 0;
 };
 
@@ -59,10 +59,10 @@ public:
     virtual ~ISrsProtocolWriter() {}
 // For protocol
 public:
-    // Set the timeout tm in srs_utime_t for send bytes to peer.
+    // Set the timeout tm in srs_utime_t for sending bytes to the peer.
     // @remark Use SRS_UTIME_NO_TIMEOUT to never timeout.
     virtual void set_send_timeout(srs_utime_t tm) = 0;
-    // Get the timeout in srs_utime_t for send bytes to peer.
+    // Get the timeout in srs_utime_t for sending bytes to the peer.
     virtual srs_utime_t get_send_timeout() = 0;
 };
 

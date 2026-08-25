@@ -87,7 +87,7 @@ void SrsMessageHeader::initialize_amf0_script(int size, int stream)
     timestamp = (int64_t)0;
     stream_id = (int32_t)stream;
 
-    // amf0 script use connection2 chunk-id
+    // amf0 script uses the connection2 chunk-id
     prefer_cid = RTMP_CID_OverConnection2;
 }
 
@@ -193,8 +193,8 @@ srs_error_t SrsSharedPtrMessage::create(SrsCommonMessage* msg)
     }
 
     // to prevent double free of payload:
-    // initialize already attach the payload of msg,
-    // detach the payload to transfer the owner to shared ptr.
+    // initialize already attached the payload of msg,
+    // detach the payload to transfer ownership to the shared ptr.
     msg->payload = NULL;
     msg->size = 0;
 
@@ -212,7 +212,7 @@ srs_error_t SrsSharedPtrMessage::create(SrsMessageHeader* pheader, char* payload
     srs_assert(!ptr);
     ptr = new SrsSharedPtrPayload();
 
-    // direct attach the data.
+    // directly attach the data.
     if (pheader) {
         ptr->header.message_type = pheader->message_type;
         ptr->header.payload_length = size;
@@ -223,7 +223,7 @@ srs_error_t SrsSharedPtrMessage::create(SrsMessageHeader* pheader, char* payload
     ptr->payload = payload;
     ptr->size = size;
 
-    // message can access it.
+    // the message can access it.
     this->payload = ptr->payload;
     this->size = ptr->size;
 
@@ -242,8 +242,8 @@ bool SrsSharedPtrMessage::check(int stream_id)
         return true;
     }
 
-    // we donot use the complex basic header,
-    // ensure the basic header is 1bytes.
+    // we do not use the complex basic header,
+    // ensure the basic header is 1 byte.
     if (ptr->header.prefer_cid < 2 || ptr->header.prefer_cid > 63) {
         ptr->header.prefer_cid = RTMP_CID_ProtocolControl;
     }
@@ -315,7 +315,7 @@ int srs_chunk_header_c0(int prefer_cid, uint32_t timestamp, int32_t payload_leng
         return 0;
     }
 
-    // write new chunk stream header, fmt is 0
+    // write a new chunk stream header, fmt is 0
     *p++ = 0x00 | (prefer_cid & 0x3F);
 
     // chunk message header, 11 bytes
@@ -376,7 +376,7 @@ int srs_chunk_header_c3(int prefer_cid, uint32_t timestamp, char* cache, int nb_
         return 0;
     }
 
-    // write no message header chunk stream, fmt is 3
+    // write a chunk stream with no message header, fmt is 3
     // @remark, if prefer_cid > 0x3F, that is, use 2B/3B chunk header,
     // SRS will rollback to 1B chunk header.
     *p++ = 0xC0 | (prefer_cid & 0x3F);

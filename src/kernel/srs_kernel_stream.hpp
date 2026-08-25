@@ -18,18 +18,18 @@ public:
     SrsSimpleStream();
     virtual ~SrsSimpleStream();
 public:
-    // Get the length of buffer. empty if zero.
+    // Get the length of the buffer. empty if zero.
     // @remark assert length() is not negative.
     virtual int length();
     // Get the buffer bytes.
     // @return the bytes, NULL if empty.
     virtual char* bytes();
-    // Erase size of bytes from begin.
-    // @param size to erase size of bytes. clear if size greater than or equals to length()
-    // @remark ignore size is not positive.
+    // Erase size bytes from the beginning.
+    // @param size the number of bytes to erase. clear if size is greater than or equal to length()
+    // @remark ignored if size is not positive.
     virtual void erase(int size);
-    // Append specified bytes to buffer.
-    // @param size the size of bytes
+    // Append the specified bytes to the buffer.
+    // @param size the size in bytes
     // @remark assert size is positive.
     virtual void append(const char* bytes, int size);
     virtual void append(SrsSimpleStream* src);

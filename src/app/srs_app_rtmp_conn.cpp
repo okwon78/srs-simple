@@ -19,7 +19,7 @@
 
 using namespace std;
 
-// The timeout in srs_utime_t to wait encoder to republish
+// The timeout in srs_utime_t to wait for the encoder to republish
 // if timeout, close the connection. (원본: srs_app_rtmp_conn.cpp:46)
 #define SRS_REPUBLISH_SEND_TIMEOUT (3 * SRS_UTIME_MINUTES)
 #define SRS_REPUBLISH_RECV_TIMEOUT (3 * SRS_UTIME_MINUTES)
@@ -104,7 +104,7 @@ srs_error_t SrsRtmpConn::do_cycle()
         return srs_error_wrap(err, "rtmp connect tcUrl");
     }
 
-    // set client ip to request.
+    // set the client ip to the request.
     req->ip = ip;
 
     srs_trace("connect app, tcUrl=%s, pageUrl=%s, swfUrl=%s, schema=%s, vhost=%s, port=%d, app=%s, args=%s",
@@ -133,17 +133,17 @@ srs_error_t SrsRtmpConn::service_cycle()
         return srs_error_wrap(err, "rtmp: set peer bandwidth");
     }
 
-    // get the ip which client connected.
+    // get the ip which the client connected to.
     std::string local_ip = srs_get_local_ip(srs_netfd_fileno(stfd));
 
-    // set chunk size to larger.
+    // set the chunk size to a larger value.
     // set the chunk size before any larger response greater than 128,
     // to make OBS happy, @see https://github.com/ossrs/srs/issues/454
     if ((err = rtmp->set_chunk_size(_srs_config->chunk_size)) != srs_success) {
         return srs_error_wrap(err, "rtmp: set chunk size %d", _srs_config->chunk_size);
     }
 
-    // response the client connect ok.
+    // respond to the client that connect is ok.
     if ((err = rtmp->response_connect_app(req, local_ip.c_str())) != srs_success) {
         return srs_error_wrap(err, "rtmp: response connect app");
     }
@@ -155,20 +155,20 @@ srs_error_t SrsRtmpConn::service_cycle()
 
         err = stream_service_cycle();
 
-        // stream service must terminated with error, never success.
-        // when terminated with success, it's user required to stop.
+        // the stream service must terminate with an error, never with success.
+        // when it terminates with success, it means the user asked to stop.
         if (err == srs_success) {
             continue;
         }
 
-        // when not system control error, fatal error, return.
+        // when it is not a system control error, it's a fatal error, return.
         if (!srs_is_system_control_error(err)) {
             return srs_error_wrap(err, "rtmp: stream service");
         }
 
         // for republish, continue service
         if (srs_error_code(err) == ERROR_CONTROL_REPUBLISH) {
-            // set timeout to a larger value, wait for encoder to republish.
+            // set the timeout to a larger value, wait for the encoder to republish.
             rtmp->set_send_timeout(SRS_REPUBLISH_RECV_TIMEOUT);
             rtmp->set_recv_timeout(SRS_REPUBLISH_SEND_TIMEOUT);
 
@@ -177,10 +177,10 @@ srs_error_t SrsRtmpConn::service_cycle()
             continue;
         }
 
-        // for "some" system control error,
-        // logical accept and retry stream service.
+        // for "some" system control errors,
+        // logically accept and retry the stream service.
         if (srs_error_code(err) == ERROR_CONTROL_RTMP_CLOSE) {
-            // set timeout to a larger value, for user paused.
+            // set the timeout to a larger value, for the user paused.
             rtmp->set_recv_timeout(SRS_PAUSED_RECV_TIMEOUT);
             rtmp->set_send_timeout(SRS_PAUSED_SEND_TIMEOUT);
 
@@ -189,7 +189,7 @@ srs_error_t SrsRtmpConn::service_cycle()
             continue;
         }
 
-        // for other system control message, fatal error.
+        // for other system control messages, it's a fatal error.
         return srs_error_wrap(err, "rtmp: reject");
     }
 
@@ -223,7 +223,7 @@ srs_error_t SrsRtmpConn::stream_service_cycle()
         return srs_error_new(ERROR_RTMP_STREAM_NAME_EMPTY, "rtmp: empty stream");
     }
 
-    // client is identified, set the timeout to service timeout.
+    // the client is identified, set the timeout to the service timeout.
     rtmp->set_recv_timeout(SRS_CONSTS_RTMP_TIMEOUT);
     rtmp->set_send_timeout(SRS_CONSTS_RTMP_TIMEOUT);
 
@@ -242,7 +242,7 @@ srs_error_t SrsRtmpConn::stream_service_cycle()
 
     switch (info->type) {
         case SrsRtmpConnPlay: {
-            // response connection start play
+            // respond to the client that play starts
             if ((err = rtmp->start_play(info->res->stream_id)) != srs_success) {
                 return srs_error_wrap(err, "rtmp: start play");
             }
@@ -273,7 +273,7 @@ srs_error_t SrsRtmpConn::playing(SrsLiveSource* source)
 {
     srs_error_t err = srs_success;
 
-    // Create a consumer of source.
+    // Create a consumer of the source.
     SrsLiveConsumer* consumer = NULL;
     if ((err = source->create_consumer(consumer)) != srs_success) {
         return srs_error_wrap(err, "rtmp: create consumer");
@@ -286,7 +286,7 @@ srs_error_t SrsRtmpConn::playing(SrsLiveSource* source)
         return srs_error_wrap(err, "rtmp: dumps consumer");
     }
 
-    // Deliver packets to peer.
+    // Deliver packets to the peer.
     // 원본은 수신 전용 코루틴(SrsQueueRecvThread)을 붙이지만, 연결당 1스레드로
     // do_playing이 idle에 소켓을 직접 확인한다 (CLAUDE.md §5.1).
     err = do_playing(source, consumer);
@@ -311,7 +311,7 @@ srs_error_t SrsRtmpConn::do_playing(SrsLiveSource* source, SrsLiveConsumer* cons
     time_t last_report = ::time(NULL);
 
     while (true) {
-        // when source is set to expired, disconnect it.
+        // when the source is set to expired, disconnect it.
         if ((err = trd->pull()) != srs_success) {
             return srs_error_wrap(err, "rtmp: thread quit");
         }
@@ -336,25 +336,25 @@ srs_error_t SrsRtmpConn::do_playing(SrsLiveSource* source, SrsLiveConsumer* cons
             pfd.revents = 0;
         }
 
-        // wait for message to incoming.
+        // wait for messages to come in.
         // @see https://github.com/ossrs/srs/issues/257
         consumer->wait(_srs_config->mw_msgs, SRS_PERF_MW_SLEEP);
 
-        // get messages from consumer.
-        // each msg in msgs.msgs must be free, for the SrsMessageArray never free them.
+        // get messages from the consumer.
+        // each msg in msgs.msgs must be freed, for the SrsMessageArray never frees them.
         int count = 0;
         if ((err = consumer->dump_packets(&msgs, count)) != srs_success) {
             return srs_error_wrap(err, "rtmp: consumer dump packets");
         }
 
-        // ignore when nothing got.
+        // ignore when we got nothing.
         if (count <= 0) {
             continue;
         }
         nb_msgs_sent += count;
 
-        // sendout messages, all messages are freed by send_and_free_messages().
-        // no need to assert msg, for the rtmp will assert it.
+        // send out the messages, all messages are freed by send_and_free_messages().
+        // no need to assert msg, for the rtmp stack will assert it.
         if ((err = rtmp->send_and_free_messages(msgs.msgs, count, info->res->stream_id)) != srs_success) {
             return srs_error_wrap(err, "rtmp: send %d messages", count);
         }
@@ -406,7 +406,7 @@ srs_error_t SrsRtmpConn::publishing(SrsLiveSource* source)
         err = do_publishing(source);
     }
 
-    // Release when acquire publishing success, if not, we should ignore,
+    // Release when acquiring publishing succeeded, if not, we should ignore it,
     // because the source is not published by this session.
     if (acquire_err == srs_success) {
         release_publish(source);
@@ -421,7 +421,7 @@ srs_error_t SrsRtmpConn::acquire_publish(SrsLiveSource* source)
 
     SrsRequest* req = info->req;
 
-    // Check whether RTMP stream is busy.
+    // Check whether the RTMP stream is busy.
     // (검사+점유의 원자성은 on_publish 내부에서 보장한다 — CLAUDE.md §5.6)
     if (!source->can_publish()) {
         return srs_error_new(ERROR_SYSTEM_STREAM_BUSY, "rtmp: stream %s is busy", req->get_stream_url().c_str());
@@ -437,8 +437,8 @@ srs_error_t SrsRtmpConn::acquire_publish(SrsLiveSource* source)
 
 void SrsRtmpConn::release_publish(SrsLiveSource* source)
 {
-    // when edge, notice edge to change state.
-    // when origin, notice all service to unpublish.
+    // when edge, notify the edge to change state.
+    // when origin, notify all services to unpublish.
     source->on_unpublish();
 }
 
@@ -446,7 +446,7 @@ srs_error_t SrsRtmpConn::do_publishing(SrsLiveSource* source)
 {
     srs_error_t err = srs_success;
 
-    // Response the start publishing message, let client start to publish messages.
+    // Respond with the start publishing message, let the client start to publish messages.
     // 인가(acquire) 통과 후에만 보낸다 — OBS 재연결 루프 방지 (#4037, CLAUDE.md §5.3).
     if ((err = rtmp->start_publishing(info->res->stream_id)) != srs_success) {
         return srs_error_wrap(err, "start publishing");
@@ -579,9 +579,9 @@ srs_error_t SrsRtmpConn::cycle()
     // Serve the client.
     err = do_cycle();
 
-    // Notify manager to remove it.
+    // Notify the manager to remove it.
     // 자기 스레드에서 delete this 금지 — 매니저가 다른 스레드에서 해제한다 (CLAUDE.md §5.3).
-    // Note that we create this object, so we use manager to remove it.
+    // Note that we create this object, so we use the manager to remove it.
     manager->remove(this);
 
     // success.
@@ -590,7 +590,7 @@ srs_error_t SrsRtmpConn::cycle()
         return err;
     }
 
-    // client close peer.
+    // the client closed the connection.
     if (srs_is_client_gracefully_close(err)) {
         srs_warn("client disconnect peer. ret=%d", srs_error_code(err));
     } else {

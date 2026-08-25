@@ -31,18 +31,18 @@ class SrsHttpConn : public ISrsConnection, public ISrsStartable, public ISrsCoro
 private:
     srs_netfd_t stfd;
     SrsStSocket* skt;
-    // Each connection start a green thread,
-    // when thread stop, the connection will be delete by server.
+    // Each connection starts a green thread,
+    // when the thread stops, the connection will be deleted by the server.
     SrsCoroutine* trd;
     // The manager object to manage the connection.
     ISrsResourceManager* manager;
-    // The ip and port of client.
+    // The ip and port of the client.
     std::string ip;
     int port;
 private:
     // keep-alive 수신 버퍼 — 다음 요청의 선행 수신분(파이프라이닝)을 요청 사이에 보관.
     std::string inbuf;
-    // Whether client requested Connection: close.
+    // Whether the client requested Connection: close.
     bool conn_close_;
 public:
     SrsHttpConn(SrsServer* svr, srs_netfd_t c, std::string cip, int cport);

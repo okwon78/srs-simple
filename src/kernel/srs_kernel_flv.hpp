@@ -34,23 +34,23 @@ class SrsBuffer;
 // 3.6. Aggregate message (판별자만 유지 — 수신 시 거부용, CLAUDE.md §1 비목표)
 #define RTMP_MSG_AggregateMessage               22 // 0x16
 
-// The chunk stream id used for some under-layer message,
+// The chunk stream id used for some under-layer messages,
 // For example, the PC(protocol control) message.
 #define RTMP_CID_ProtocolControl                0x02
 // The AMF0/AMF3 command message, invoke method and return the result, over NetConnection.
-// generally use 0x03.
+// generally uses 0x03.
 #define RTMP_CID_OverConnection                 0x03
 // The AMF0/AMF3 command message, over NetConnection, the midst state(we guess).
 // rarely used, e.g. onStatus(NetStream.Play.Reset).
 #define RTMP_CID_OverConnection2                0x04
 // The stream message(amf0/amf3), over NetStream.
-// generally use 0x05.
+// generally uses 0x05.
 #define RTMP_CID_OverStream                     0x05
 // The stream message(video), over NetStream
-// generally use 0x06.
+// generally uses 0x06.
 #define RTMP_CID_Video                          0x06
 // The stream message(audio), over NetStream.
-// generally use 0x07.
+// generally uses 0x07.
 #define RTMP_CID_Audio                          0x07
 
 // 6.1. Chunk Format
@@ -86,12 +86,12 @@ public:
 
     // Four-byte field that contains a timestamp of the message.
     // The 4 bytes are packed in the big-endian order.
-    // @remark, used as calc timestamp when decode and encode time.
-    // @remark, we use 64bits for large time for jitter detect.
+    // @remark, used to calculate the timestamp when decoding and encoding time.
+    // @remark, we use 64bits for large time for jitter detection.
     int64_t timestamp;
 public:
-    // Get the prefered cid(chunk stream id) which sendout over.
-    // set at decoding, and canbe used for directly send message.
+    // Get the preferred cid(chunk stream id) which the message is sent over.
+    // set at decoding, and can be used to send the message directly.
     int prefer_cid;
 public:
     SrsMessageHeader();
@@ -110,15 +110,15 @@ public:
     bool is_set_peer_bandwidth();
     bool is_aggregate();
 public:
-    // Create a amf0 script header, set the size and stream_id.
+    // Create an amf0 script header, set the size and stream_id.
     void initialize_amf0_script(int size, int stream);
-    // Create a audio header, set the size, timestamp and stream_id.
+    // Create an audio header, set the size, timestamp and stream_id.
     void initialize_audio(int size, uint32_t time, int stream);
     // Create a video header, set the size, timestamp and stream_id.
     void initialize_video(int size, uint32_t time, int stream);
 };
 
-// The message is raw data RTMP message, bytes oriented.
+// The message is a raw data RTMP message, bytes oriented.
 // The common message is read from underlay protocol sdk (수신 측, 페이로드 단일 소유),
 // while the shared ptr message used to copy and send (송신 측) — CLAUDE.md §5.2.
 class SrsCommonMessage
@@ -130,28 +130,28 @@ public:
 public:
     // The current message parsed size,
     //       size <= header.payload_length
-    // For the payload maybe sent in multiple chunks.
+    // For the payload may be sent in multiple chunks.
     int size;
-    // The payload of message, the SrsCommonMessage never know about the detail of payload,
-    // user must use SrsProtocol.decode_message to get concrete packet.
-    // @remark, not all message payload can be decoded to packet. for example,
-    //       video/audio packet use raw bytes, no video/audio packet.
+    // The payload of the message, the SrsCommonMessage never knows about the details of the payload,
+    // the user must use SrsProtocol.decode_message to get the concrete packet.
+    // @remark, not all message payloads can be decoded to a packet. For example,
+    //       video/audio messages use raw bytes, and there is no video/audio packet.
     char* payload;
 public:
     SrsCommonMessage();
     virtual ~SrsCommonMessage();
 public:
-    // Alloc the payload to specified size of bytes.
+    // Alloc the payload to the specified size in bytes.
     virtual void create_payload(int size);
 public:
-    // Create common message, from the header and body.
-    // @remark user should never free the body.
+    // Create a common message, from the header and body.
+    // @remark the user should never free the body.
     // @param pheader, the header to copy to the message. NULL to ignore.
     virtual srs_error_t create(SrsMessageHeader* pheader, char* body, int size);
 };
 
-// The message header for shared ptr message.
-// only the message for all msgs are same.
+// The message header for the shared ptr message.
+// only the fields that are the same for all msgs.
 class SrsSharedMessageHeader
 {
 public:
@@ -161,7 +161,7 @@ public:
     // 1byte.
     // One byte field to represent the message type.
     int8_t message_type;
-    // Get the prefered cid(chunk stream id) which sendout over.
+    // Get the preferred cid(chunk stream id) which the message is sent over.
     int prefer_cid;
 public:
     SrsSharedMessageHeader();
@@ -169,17 +169,17 @@ public:
 };
 
 // The shared ptr message.
-// For audio/video/data message that need less memory copy.
+// For audio/video/data messages that need less memory copy,
 // and only for output.
 //
-// Create first object by constructor and create(),
-// use copy if need reference count message.
+// Create the first object by constructor and create(),
+// use copy() if you need a reference-counted message.
 // 1MB 키프레임을 N명에게 팬아웃해도 payload 복사는 0회 — copy()는 refcount만 증가.
 class SrsSharedPtrMessage
 {
 // 4.1. Message Header
 public:
-    // The header can shared, only set the timestamp and stream id.
+    // The header can be shared, only set the timestamp and stream id.
     int64_t timestamp;
     int32_t stream_id;
 // 4.2. Message Payload
@@ -187,7 +187,7 @@ public:
     // The current message parsed size,
     //       size <= header.payload_length
     int size;
-    // The payload of message.
+    // The payload of the message.
     char* payload;
 private:
     class SrsSharedPtrPayload
@@ -197,7 +197,7 @@ private:
         SrsSharedMessageHeader header;
         // The actual shared payload.
         char* payload;
-        // The size of payload.
+        // The size of the payload.
         int size;
         // The reference count
         int shared_count;
@@ -210,46 +210,46 @@ public:
     SrsSharedPtrMessage();
     virtual ~SrsSharedPtrMessage();
 public:
-    // Create shared ptr message,
-    // copy header, manage the payload of msg,
+    // Create a shared ptr message,
+    // copy the header, manage the payload of msg,
     // set the payload to NULL to prevent double free.
-    // @remark payload of msg set to NULL if success.
+    // @remark the payload of msg is set to NULL on success.
     virtual srs_error_t create(SrsCommonMessage* msg);
-    // Create shared ptr message, from the header and payload.
-    // @remark user should never free the payload.
+    // Create a shared ptr message, from the header and payload.
+    // @remark the user should never free the payload.
     // @param pheader, the header to copy to the message. NULL to ignore.
     virtual srs_error_t create(SrsMessageHeader* pheader, char* payload, int size);
-    // Get current reference count.
-    // when this object created, count set to 0.
-    // if copy() this object, count increase 1.
-    // if this or copy deleted, free payload when count is 0, or count--.
-    // @remark, assert object is created.
+    // Get the current reference count.
+    // when this object is created, count is set to 0.
+    // if you copy() this object, count increases by 1.
+    // if this or a copy is deleted, free the payload when count is 0, or count--.
+    // @remark, assert the object is created.
     virtual int count();
-    // check prefer cid and stream id.
-    // @return whether stream id already set.
+    // check the prefer cid and stream id.
+    // @return whether the stream id was already set.
     virtual bool check(int stream_id);
 public:
     virtual bool is_av();
     virtual bool is_audio();
     virtual bool is_video();
 public:
-    // generate the chunk header to cache.
-    // @return the size of header.
+    // generate the chunk header into the cache.
+    // @return the size of the header.
     virtual int chunk_header(char* cache, int nb_cache, bool c0);
 public:
-    // copy current shared ptr message, use ref-count.
-    // @remark, assert object is created.
+    // copy the current shared ptr message, using ref-count.
+    // @remark, assert the object is created.
     virtual SrsSharedPtrMessage* copy();
 };
 
 // 청크 헤더 직렬화 (원본: kernel/srs_kernel_utility.cpp:1184/1259)
 // 송신은 항상 "첫 청크 fmt=0 + 이어지는 청크 fmt=3"만 사용한다 — CLAUDE.md §2.2.
 // Generate the c0 chunk header for msg.
-// @return the size of header. 0 if cache not enough.
+// @return the size of the header. 0 if the cache is not enough.
 extern int srs_chunk_header_c0(int prefer_cid, uint32_t timestamp, int32_t payload_length,
     int8_t message_type, int32_t stream_id, char* cache, int nb_cache);
 // Generate the c3 chunk header for msg.
-// @return the size of header. 0 if cache not enough.
+// @return the size of the header. 0 if the cache is not enough.
 extern int srs_chunk_header_c3(int prefer_cid, uint32_t timestamp, char* cache, int nb_cache);
 
 #endif

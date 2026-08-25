@@ -544,7 +544,7 @@ srs_error_t SrsMp4M2tsSegmentEncoder::write_sample(SrsMp4HandlerType ht,
     ps->dts = dts;
     ps->pts = pts;
 
-    // We should copy the sample data, which is shared ptr from video/audio message.
+    // We should copy the sample data, which is a shared ptr from the video/audio message.
     ps->data = new uint8_t[nb_sample];
     memcpy(ps->data, sample, nb_sample);
     ps->nb_data = nb_sample;

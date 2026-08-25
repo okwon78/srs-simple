@@ -20,28 +20,28 @@
 typedef int srs_netfd_t;
 #define SRS_NETFD_INVALID (-1)
 
-// Get the underlayer os fd.
+// Get the underlying os fd.
 extern int srs_netfd_fileno(srs_netfd_t fd);
 // Close the netfd and set to invalid.
 extern void srs_close_stfd(srs_netfd_t& fd);
 
-// Each coroutine must implements this interface,
+// Each coroutine must implement this interface,
 // to do the cycle job and handle some events.
 //
-// Thread do a job then terminated normally, it's a SrsOneCycleThread:
+// A thread does a job then terminates normally, it's a SrsOneCycleThread:
 //      class SrsOneCycleThread : public ISrsCoroutineHandler {
 //          public: SrsCoroutine trd;
 //          public: virtual srs_error_t cycle() {
-//              // Do something, then return this cycle and thread terminated normally.
+//              // Do something, then return from this cycle and the thread terminates normally.
 //          }
 //      };
 //
-// Thread has its inside loop, such as the RTMP receive thread:
+// A thread has its own inner loop, such as the RTMP receive thread:
 //      class SrsReceiveThread : public ISrsCoroutineHandler {
 //          public: SrsCoroutine* trd;
 //          public: virtual srs_error_t cycle() {
 //              while (true) {
-//                  // Check whether thread interrupted.
+//                  // Check whether the thread is interrupted.
 //                  if ((err = trd->pull()) != srs_success) {
 //                      return err;
 //                  }
@@ -55,7 +55,7 @@ public:
     ISrsCoroutineHandler();
     virtual ~ISrsCoroutineHandler();
 public:
-    // Do the work. The coroutine will terminated normally if it returned.
+    // Do the work. The coroutine will terminate normally if it returns.
     // @remark If the cycle has its own loop, it must check the thread pull.
     virtual srs_error_t cycle() = 0;
 };
@@ -95,7 +95,7 @@ public:
     virtual void set_cid(const SrsContextId& cid) = 0;
 };
 
-// An empty coroutine, user can default to this object before create any real coroutine.
+// An empty coroutine, the user can default to this object before creating any real coroutine.
 // @see https://github.com/ossrs/srs/pull/908
 class SrsDummyCoroutine : public SrsCoroutine
 {
@@ -115,7 +115,7 @@ public:
 
 // The pthread-backed coroutine. 원본 이름(SrsSTCoroutine)을 유지한다 —
 // 원본은 SrsFastCoroutine에 위임하는 래퍼지만(성능 분리), 여기서는 직접 구현한다.
-// @remark We always create joinable thread, so we must join it (in stop) or memory leak.
+// @remark We always create a joinable thread, so we must join it (in stop) or leak memory.
 class SrsSTCoroutine : public SrsCoroutine
 {
 private:
@@ -146,17 +146,17 @@ public:
     // Start the thread.
     // @remark Should never start it when stopped or terminated.
     virtual srs_error_t start();
-    // Interrupt the thread then wait(join) to terminated.
+    // Interrupt the thread then wait(join) until it terminates.
     virtual void stop();
     // Interrupt the thread and notify it to terminate, then pull() returns error.
     // ST는 블록된 IO를 즉시 깨우지만, pthread에서는 소켓 타임아웃(SO_RCVTIMEO)으로
     // 주기적으로 깨어난 워커가 pull()을 확인해 종료한다 (CLAUDE.md §5.1).
     virtual void interrupt();
-    // Check whether thread is terminated normally or error(stopped or terminated with error),
-    // and the thread should be running if it return ERROR_SUCCESS.
-    // @remark Return specified error when thread terminated normally with error.
-    // @remark Return ERROR_THREAD_TERMINATED when thread terminated normally without error.
-    // @remark Return ERROR_THREAD_INTERRUPED when thread is interrupted.
+    // Check whether the thread is terminated normally or with error(stopped or terminated with error),
+    // and the thread should be running if it returns ERROR_SUCCESS.
+    // @remark Return the specified error when the thread terminated normally with an error.
+    // @remark Return ERROR_THREAD_TERMINATED when the thread terminated normally without error.
+    // @remark Return ERROR_THREAD_INTERRUPED when the thread is interrupted.
     virtual srs_error_t pull();
     // Get and set the context id of thread.
     virtual const SrsContextId& cid();
@@ -179,7 +179,7 @@ private:
     // The recv/send data in bytes
     int64_t rbytes;
     int64_t sbytes;
-    // The underlayer fd.
+    // The underlying fd.
     srs_netfd_t stfd_;
 public:
     SrsStSocket();

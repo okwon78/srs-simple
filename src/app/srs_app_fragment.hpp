@@ -23,31 +23,31 @@ private:
     srs_utime_t start_dts;
     // Whether current fragment contains sequence header (m3u8의 EXT-X-DISCONTINUITY 판단).
     bool sequence_header;
-    // The full file path of fragment.
+    // The full file path of the fragment.
     std::string filepath;
 public:
     SrsFragment();
     virtual ~SrsFragment();
 public:
-    // Append a frame with dts into fragment, to update the duration.
-    // @param dts The dts of frame in ms.
+    // Append a frame with dts into the fragment, to update the duration.
+    // @param dts The dts of the frame in ms.
     virtual void append(int64_t dts);
-    // Get the duration of fragment in srs_utime_t.
+    // Get the duration of the fragment in srs_utime_t.
     virtual srs_utime_t duration();
     // Whether the fragment contains any sequence header.
     virtual bool is_sequence_header();
-    // Set whether contains sequence header.
+    // Set whether it contains a sequence header.
     virtual void set_sequence_header(bool v);
-    // Get the full path of fragment.
+    // Get the full path of the fragment.
     virtual std::string fullpath();
-    // Set the full path of fragment.
+    // Set the full path of the fragment.
     virtual void set_path(std::string v);
-    // Get the temporary path for file to write (fullpath + ".tmp").
+    // Get the temporary path for the file to write (fullpath + ".tmp").
     virtual std::string tmppath();
-    // Create the dir for file recursively.
+    // Create the dir for the file recursively.
     virtual srs_error_t create_dir();
 public:
-    // Rename the temporary file to fullpath, when fragment is complete.
+    // Rename the temporary file to fullpath, when the fragment is complete.
     virtual srs_error_t rename();
     // Unlink the fragment file (만료된 세그먼트 삭제).
     virtual srs_error_t unlink_file();
@@ -55,7 +55,7 @@ public:
     virtual srs_error_t unlink_tmpfile();
 };
 
-// The fragment window manage a series of fragments:
+// The fragment window manages a series of fragments:
 // 살아있는 세그먼트 목록 = m3u8에 실리는 목록. shrink가 롤링 윈도우를 유지한다.
 class SrsFragmentWindow
 {
@@ -67,13 +67,13 @@ public:
     SrsFragmentWindow();
     virtual ~SrsFragmentWindow();
 public:
-    // Append a new fragment, which is ready to delivery to client.
+    // Append a new fragment, which is ready to be delivered to the client.
     virtual void append(SrsFragment* fragment);
     // Shrink the window, move deprecated fragments to expired.
     // @param window The duration in srs_utime_t to keep.
     virtual void shrink(srs_utime_t window);
     // Clear the expired fragments.
-    // @param delete_files Whether unlink the fragment files.
+    // @param delete_files Whether to unlink the fragment files.
     virtual void clear_expired(bool delete_files);
     // Get the max duration in srs_utime_t of all fragments.
     virtual srs_utime_t max_duration();

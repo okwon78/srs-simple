@@ -10,28 +10,28 @@
 #include <sys/types.h>
 #include <sys/uio.h>
 
-// The reader to read data from channel.
+// The reader to read data from a channel.
 class ISrsReader
 {
 public:
     virtual ~ISrsReader() {}
 public:
     // Read bytes from reader.
-    // @param nread How many bytes read from channel. NULL to ignore.
+    // @param nread How many bytes were read from the channel. NULL to ignore.
     virtual srs_error_t read(void* buf, size_t size, ssize_t* nread) = 0;
 };
 
-// The writer to write stream data to channel.
+// The writer to write stream data to a channel.
 // 원본의 ISrsStreamWriter(write) + ISrsVectorWriter(writev) 병합.
 class ISrsWriter
 {
 public:
     virtual ~ISrsWriter() {}
 public:
-    // Write bytes over writer.
+    // Write bytes over the writer.
     // @param nwrite The actual written bytes. NULL to ignore.
     virtual srs_error_t write(void* buf, size_t size, ssize_t* nwrite) = 0;
-    // Write iov over writer.
+    // Write an iov over the writer.
     virtual srs_error_t writev(const iovec* iov, int iov_size, ssize_t* nwrite) = 0;
 };
 

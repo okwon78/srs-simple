@@ -126,7 +126,7 @@ SetChunkSize (type 1) — payload 4B
 `ERROR_RTMP_CHUNK_SIZE`로 **거부**한다(이슈 #541 — 크기 2 같은 값은 실수가 아니라 공격에
 가깝다). utest는 이 중 아래쪽 경계(128 미만 거부)와 반영 자체(256으로 갱신)를 검증한다
 ([srs_utest_protocol.cpp:876-935](../utest/srs_utest_protocol.cpp#L876-L935)). 테스트의
-와이어 바이트를 보자 — 컨트롤 메시지 전체 청크가 이렇게 생겼다:
+네트워크로 오가는 바이트를 보자 — 컨트롤 메시지 전체 청크가 이렇게 생겼다:
 
 ```text
 02             ──  basic header      fmt=0, csid=2 (프로토콜 컨트롤 채널)
@@ -346,7 +346,7 @@ SetPeerBandwidth (type 6) — payload 5B
 type은 dynamic), 받는 쪽 경로는 아예 없다 — `SrsSetPeerBandwidthPacket`에는 `decode`
 오버라이드 자체가 없고
 ([srs_protocol_rtmp_stack.hpp:1019-1037](../src/protocol/srs_protocol_rtmp_stack.hpp#L1019-L1037)),
-수신되어도 `on_recv_message`의 default로 버려진다. "스펙에는 진지하게 적혀 있으나 와이어
+수신되어도 `on_recv_message`의 default로 버려진다. "스펙에는 진지하게 적혀 있으나 실제 네트워크
 위에서는 의례가 된 메시지"의 표본이다.
 
 ---
@@ -416,7 +416,7 @@ Ping 에코, StreamBegin 송신" 네 가지로 줄어든다. srs_simple의 실�
    Pong을 자동 송신한다. 메시지는 위층에도 올라가지만 앱 루프는 드롭한다
 3. **타이밍이 내용보다 어렵다.** SetChunkSize는 128바이트 넘는 첫 응답(connect
    `_result`)보다 먼저(#454). ACK는 window 절반마다 미리. StreamBegin은 play 응답의 맨 앞
-4. **문서와 와이어는 다르다.** WindowAckSize/ACK는 publisher→server 방향만 실질이고,
+4. **문서와 실제 네트워크는 다르다.** WindowAckSize/ACK는 publisher→server 방향만 실질이고,
    SetPeerBandwidth는 집행자 없는 의례다. `out_ack_size`를 아무도 검사하지 않는다는 것은
    코드를 읽어야만 보인다
 

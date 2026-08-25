@@ -8,8 +8,8 @@
 #include <srs_protocol_io.hpp>
 
 /**
- * the buffer provices bytes cache for protocol. generally,
- * protocol recv data from socket, put into buffer, decode to RTMP message.
+ * the buffer provides a bytes cache for the protocol. generally,
+ * the protocol receives data from the socket, puts it into the buffer, and decodes it to an RTMP message.
  * Usage:
  *       ISrsReader* r = ......;
  *       SrsFastStream* fb = ......;
@@ -20,8 +20,8 @@
 class SrsFastStream
 {
 private:
-    // the user-space buffer to fill by reader,
-    // which use fast index and reset when chunk body read ok.
+    // the user-space buffer to be filled by the reader,
+    // which uses a fast index and resets when the chunk body is read ok.
     // ptr to the current read position.
     char* p;
     // ptr to the content end.
@@ -29,37 +29,37 @@ private:
     // ptr to the buffer.
     //      buffer <= p <= end <= buffer+nb_buffer
     char* buffer;
-    // the size of buffer.
+    // the size of the buffer.
     int nb_buffer;
 public:
-    // If buffer is 0, use default size.
+    // If buffer is 0, use the default size.
     SrsFastStream(int size = 0);
     virtual ~SrsFastStream();
 public:
-    // get the size of current bytes in buffer.
+    // get the size of the current bytes in the buffer.
     virtual int size();
-    // get the current bytes in buffer.
-    // @remark user should use read_slice() if possible,
+    // get the current bytes in the buffer.
+    // @remark the user should use read_slice() if possible,
     //       the bytes() is used to test bytes, for example, to detect the bytes schema.
     virtual char* bytes();
 public:
-    // read 1byte from buffer, move to next bytes.
-    // @remark assert buffer already grow(1).
+    // read 1 byte from the buffer, move to the next bytes.
+    // @remark assert grow(1) was already called.
     virtual char read_1byte();
-    // read a slice in size bytes, move to next bytes.
-    // user can use this char* ptr directly, and should never free it.
-    // @remark user can use the returned ptr util grow(size),
-    //       for the ptr returned maybe invalid after grow(x).
+    // read a slice of size bytes, move to the next bytes.
+    // the user can use this char* ptr directly, and should never free it.
+    // @remark the user can use the returned ptr until grow(size),
+    //       for the returned ptr may be invalid after grow(x).
     virtual char* read_slice(int size);
-    // skip some bytes in buffer.
+    // skip some bytes in the buffer.
     // @param size the bytes to skip. positive to next; negative to previous.
-    // @remark assert buffer already grow(size).
+    // @remark assert grow(size) was already called.
     virtual void skip(int size);
 public:
-    // grow buffer to atleast required size, loop to read from skt to fill.
-    // @param reader, read more bytes from reader to fill the buffer to required size.
-    // @param required_size, loop to fill to ensure buffer size to required.
-    // @remark, we actually maybe read more than required_size, maybe 4k for example.
+    // grow the buffer to at least the required size, loop to read from skt to fill.
+    // @param reader, read more bytes from the reader to fill the buffer to the required size.
+    // @param required_size, loop to fill to ensure the buffer reaches the required size.
+    // @remark, we may actually read more than required_size, maybe 4k for example.
     virtual srs_error_t grow(ISrsReader* reader, int required_size);
 };
 

@@ -449,7 +449,7 @@ srs_error_t SrsHttpConn::cycle()
 {
     srs_error_t err = do_cycle();
 
-    // Notify manager to remove it.
+    // Notify the manager to remove it.
     // 자기 스레드에서 delete this 금지 — 매니저가 다른 스레드에서 해제한다 (CLAUDE.md §5.3).
     manager->remove(this);
 
@@ -458,7 +458,7 @@ srs_error_t SrsHttpConn::cycle()
         return err;
     }
 
-    // client close peer.
+    // the client closed the connection.
     if (srs_is_client_gracefully_close(err)) {
         srs_warn("http client disconnect peer. ret=%d", srs_error_code(err));
     } else {

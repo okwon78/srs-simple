@@ -76,18 +76,18 @@ enum SrsErrorCode
     // The AVC bitstream error (S16 SPS 해상도 파싱 — 값은 원본과 동일).
     ERROR_AVC_NALU_UEV = 4027,
 
-    // For user-define error.
+    // For user-defined errors.
     ERROR_USER_DISCONNECT = 9001,
     ERROR_SOURCE_NOT_FOUND = 9002,
 };
 
-// Whether the error code is an system control error. (RTMP close/republish)
+// Whether the error code is a system control error. (RTMP close/republish)
 extern bool srs_is_system_control_error(srs_error_t err);
 // It's closed by client.
 extern bool srs_is_client_gracefully_close(srs_error_t err);
 
 // The complex error carries code, message and callstack,
-// which is more strong and easy to locate problem by log.
+// which is stronger and makes it easy to locate the problem from the log.
 // please @read https://github.com/ossrs/srs/issues/913
 class SrsCplxError
 {

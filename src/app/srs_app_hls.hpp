@@ -82,14 +82,14 @@ public:
 public:
     virtual int sequence_no();
     virtual srs_error_t initialize();
-    // When publish, update the config and open the first segment.
+    // On publish, update the config and open the first segment.
     virtual srs_error_t update_config(SrsRequest* r);
     // Open a new segment (a new ts file).
     virtual srs_error_t segment_open();
     virtual srs_error_t on_sequence_header();
     // Whether segment overflow, 세그먼트가 hls_fragment를 넘겨 잘라야 하는지.
     virtual bool is_segment_overflow();
-    // Whether wait keyframe to reap segment.
+    // Whether to wait for a keyframe to reap the segment.
     virtual bool wait_keyframe();
     // Whether segment absolutely overflow (pure audio용 — 키프레임이 없어
     // 잘릴 기회가 없으므로 hls_aof_ratio 배를 넘으면 무조건 자른다).
@@ -99,15 +99,15 @@ public:
     virtual void set_latest_acodec(SrsAudioCodecId v);
     virtual SrsVideoCodecId latest_vcodec();
     virtual void set_latest_vcodec(SrsVideoCodecId v);
-    // Flush the cached audio/video into current segment file.
+    // Flush the cached audio/video into the current segment file.
     virtual srs_error_t flush_audio(SrsTsMessageCache* cache);
     virtual srs_error_t flush_video(SrsTsMessageCache* cache);
-    // Update the segment duration by frame dts.
+    // Update the segment duration by the frame dts.
     // @param dts in 90kHz.
     virtual void update_duration(uint64_t dts);
     // Close segment: rename tmp → ts, m3u8 재작성, 윈도우 shrink + 만료 파일 삭제.
     virtual srs_error_t segment_close();
-    // When unpublish, close current segment and keep the VoD m3u8.
+    // On unpublish, close the current segment and keep the VoD m3u8.
     virtual srs_error_t on_unpublish();
 private:
     virtual srs_error_t do_segment_close();
@@ -136,12 +136,12 @@ public:
     // When got sequence header: 세그먼트에 쓰지 않고 마킹만 한다
     // (SPS/PPS는 TS에서 IDR 앞에 재삽입되고, m3u8엔 DISCONTINUITY 후보로 남는다).
     virtual srs_error_t on_sequence_header();
-    // Write audio frame to cache and flush. @param dts in 90kHz.
+    // Write an audio frame to the cache and flush. @param dts in 90kHz.
     virtual srs_error_t write_audio(SrsAudioFrame* frame, int64_t dts);
-    // Write video frame to cache and flush. @param dts in 90kHz.
+    // Write a video frame to the cache and flush. @param dts in 90kHz.
     virtual srs_error_t write_video(SrsVideoFrame* frame, int64_t dts);
 private:
-    // Close current segment and open a new one:
+    // Close the current segment and open a new one:
     // ★ 새 세그먼트에 video를 먼저 flush — 키프레임이 세그먼트 선두에 오게 (원본 iPhone 호환).
     virtual srs_error_t reap_segment();
 };
@@ -163,7 +163,7 @@ public:
     virtual srs_error_t initialize(SrsOriginHub* h, SrsRequest* r);
     virtual srs_error_t on_publish();
     virtual void on_unpublish();
-    // When got audio/video message with parsed format.
+    // When we get an audio/video message with parsed format.
     virtual srs_error_t on_audio(SrsSharedPtrMessage* shared_audio, SrsFormat* format);
     virtual srs_error_t on_video(SrsSharedPtrMessage* shared_video, SrsFormat* format);
 };

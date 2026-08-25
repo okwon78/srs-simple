@@ -168,13 +168,13 @@ void SrsSTCoroutine::stop()
 
     interrupt();
 
-    // We always create joinable thread, so we must join it or memory leak.
+    // We always create a joinable thread, so we must join it or leak memory.
     // 워커는 소켓 타임아웃으로 깨어나 pull()에서 인터럽트를 발견하고 곧 종료한다.
     if (need_join) {
         pthread_join(trd, NULL);
     }
 
-    // If there's no error occur from worker, try to set to terminated error.
+    // If no error occurred in the worker, try to set the terminated error.
     std::lock_guard<std::mutex> guard(lock_);
     if (trd_err == srs_success && !cycle_done) {
         trd_err = srs_error_new(ERROR_THREAD_TERMINATED, "terminated");
@@ -269,7 +269,7 @@ SrsStSocket::SrsStSocket(srs_netfd_t fd)
 
 SrsStSocket::~SrsStSocket()
 {
-    // @remark The fd is not owned by socket, user should close it.
+    // @remark The fd is not owned by the socket, the user should close it.
 }
 
 void SrsStSocket::init(srs_netfd_t fd)

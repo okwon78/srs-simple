@@ -16,7 +16,7 @@ extern srs_error_t srs_fd_closeexec(int fd);
 // Set the SO_REUSEADDR for fd.
 extern srs_error_t srs_fd_reuseaddr(int fd);
 
-// All listener should support listen method.
+// All listeners should support the listen method.
 class ISrsListener
 {
 public:
@@ -33,11 +33,11 @@ public:
     ISrsTcpHandler();
     virtual ~ISrsTcpHandler();
 public:
-    // When got tcp client.
+    // When we get a tcp client.
     virtual srs_error_t on_tcp_client(ISrsListener* listener, srs_netfd_t stfd) = 0;
 };
 
-// Bind and listen tcp port, use handler to process the client.
+// Bind and listen on the tcp port, use the handler to process the client.
 class SrsTcpListener : public ISrsCoroutineHandler, public ISrsListener
 {
 private:

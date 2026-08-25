@@ -70,7 +70,7 @@ public:
 class SrsLlHlsPart
 {
 public:
-    // The part sequence number in parent segment (0-based).
+    // The part sequence number in the parent segment (0-based).
     int psn;
     // The duration of this part.
     srs_utime_t duration;
@@ -144,7 +144,7 @@ private:
     int max_segments_;
     // The next msn to assign. 재publish에도 이어진다 — msn은 스트림 수명 동안 단조 증가.
     int64_t next_msn_;
-    // The latest published part position. (-1, -1) until first part.
+    // The latest published part position. (-1, -1) until the first part.
     int64_t latest_msn_;
     int latest_psn_;
 private:
@@ -175,7 +175,7 @@ public:
     virtual bool get_part(int64_t msn, int psn, std::string& payload);
     // 완결된 세그먼트의 전체 바이트(파트 연결). 미완결/없음이면 false.
     virtual bool get_segment(int64_t msn, std::string& payload);
-    // The oldest/latest msn in window, -1 if empty.
+    // The oldest/latest msn in the window, -1 if empty.
     virtual int64_t first_msn();
     virtual int64_t latest_msn();
     // The latest published part position. false if no part yet.
@@ -208,9 +208,9 @@ private:
     srs_utime_t part_target;
     srs_utime_t segment_target;
 private:
-    // The fMP4 encoder of current part, one-shot per part (S12).
+    // The fMP4 encoder of the current part, one-shot per part (S12).
     SrsMp4M2tsSegmentEncoder* enc;
-    // The buffer of current part bytes.
+    // The buffer of the current part bytes.
     SrsLlHlsBufferWriter writer;
     // The moof mfhd sequence number, 파트마다 증가 (재publish에도 이어진다).
     uint32_t sequence_;
@@ -225,7 +225,7 @@ private:
     // 진행 중 세그먼트의 닫힌 파트 duration 합.
     srs_utime_t segment_duration;
 private:
-    // Whether need to regenerate init.mp4 at next segment boundary.
+    // Whether we need to regenerate init.mp4 at the next segment boundary.
     bool init_dirty_;
     // Whether the stream has a configured video track — pure-audio 판단
     // (오디오 프레임은 전부 independent라 세그먼트 컷을 오디오가 주도한다).
@@ -238,7 +238,7 @@ public:
     virtual ~SrsLlHlsMuxer();
 public:
     virtual srs_error_t initialize(SrsLlHlsStorage* s);
-    // When publish, update the config snapshot and reset the part state.
+    // On publish, update the config snapshot and reset the part state.
     virtual srs_error_t update_config(SrsRequest* r);
     // When got sequence header. 변경이면 세그먼트를 닫고 init 재생성을 예약한다 —
     // 다른 코덱 설정의 샘플이 한 세그먼트(=한 EXT-X-MAP)에 섞이지 않게
@@ -247,7 +247,7 @@ public:
     // Write one frame. @param dts in milliseconds (fMP4 timescale=1000 직결 — D5).
     virtual srs_error_t write_audio(SrsFormat* format, int64_t dts);
     virtual srs_error_t write_video(SrsFormat* format, int64_t dts);
-    // When unpublish, flush the pending part as the last of its segment.
+    // On unpublish, flush the pending part as the last of its segment.
     virtual srs_error_t on_unpublish();
 private:
     // 컷 판단 — 프레임을 파트에 넣기 전에 호출한다.
@@ -283,7 +283,7 @@ public:
     virtual srs_error_t initialize(SrsOriginHub* h, SrsRequest* r);
     virtual srs_error_t on_publish();
     virtual void on_unpublish();
-    // When got audio/video message with parsed format.
+    // When we get an audio/video message with parsed format.
     virtual srs_error_t on_audio(SrsSharedPtrMessage* shared_audio, SrsFormat* format);
     virtual srs_error_t on_video(SrsSharedPtrMessage* shared_video, SrsFormat* format);
 public:

@@ -29,7 +29,7 @@ onStatus — RTMP 세션을 실제로 진행시키는 **커맨드 메시지(type
 메시지(type 18)** 는 다르다. 이들의 페이로드는 문자열, 숫자, 중첩 객체가 임의
 순서로 늘어선 **자기 서술적(self-describing) 직렬화 포맷**, AMF0다.
 
-AMF0(Action Message Format 0)는 Adobe가 ActionScript 객체를 와이어에 싣기 위해
+AMF0(Action Message Format 0)는 Adobe가 ActionScript 객체를 네트워크로 전송하기 위해
 만든 포맷이다. JSON과 역할이 같다 — 키-값 객체를 직렬화한다 — 다만 텍스트가 아니라
 바이너리이고, 각 값 앞에 **마커 바이트 1개**가 붙어 "다음에 올 것"의 타입을
 선언한다. 이 마커 체계만 익히면 connect 커맨드의 hex 덤프를 처음부터 끝까지 손으로
@@ -219,7 +219,7 @@ utest `EcmaArrayToObject`
 
 `std::map`에 넣으면 키가 사전순으로 재정렬된 채 직렬화되고, 그 응답을 받은
 FMLE(Flash Media Live Encoder)가 죽었다는 실전 기록이다. AMF0 스펙 어디에도
-"프로퍼티 순서를 보존하라"는 조항은 없다 — 그러나 **와이어의 실질 계약은 스펙이
+"프로퍼티 순서를 보존하라"는 조항은 없다 — 그러나 **실제 네트워크의 계약은 스펙이
 아니라 배포된 구현들이 정한다.** JSON 파서에게 키 순서를 기대하면 안 된다고
 배우지만, AMF0 세계에서는 정확히 그 반대가 생존 조건이었던 셈이다.
 
@@ -422,7 +422,7 @@ AMF0에서 들고 갈 것:
    객체를 만든 뒤 그 객체가 자기를 읽는다. object-eof만 첫 바이트가 Number와
    겹쳐 3바이트 선행 검사가 필요하다
 3. **삽입 순서 보존은 스펙 밖의 생존 조건.** `SrsUnSortedHashtable` =
-   `vector<pair>`. 정렬하면 FMLE가 죽는다는 원본 주석이 "와이어의 계약은 배포된
+   `vector<pair>`. 정렬하면 FMLE가 죽는다는 원본 주석이 "실제 네트워크의 계약은 배포된
    구현이 정한다"는 이 시리즈의 반복 교훈을 다시 보여준다
 4. **읽기는 관대하게, 그러나 바이트 부족은 거부.** len≤0 문자열 허용, EOF 없는
    Object 허용, EcmaArray count 불신. 반면 모든 read는 `require(n)` 방어를

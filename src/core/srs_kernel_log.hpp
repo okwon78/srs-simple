@@ -13,7 +13,7 @@
 // The max size of a line of log.
 #define SRS_BASIC_LOG_SIZE 8192
 
-// The log level, only the level big or equals to the current level will be logged.
+// The log level, only levels greater than or equal to the current level will be logged.
 enum SrsLogLevel
 {
     SrsLogLevelForbidden = 0x00,
@@ -32,7 +32,7 @@ enum SrsLogLevel
 // Get the level in string. Indexed by the level value (bit flag).
 extern const char* srs_log_level_strings[];
 
-// The log interface provides method to write log.
+// The log interface provides methods to write logs.
 class ISrsLog
 {
 public:
@@ -41,11 +41,11 @@ public:
 public:
     // Initialize log utilities.
     virtual srs_error_t initialize() = 0;
-    // Write a application level log.
+    // Write an application level log.
     virtual void log(SrsLogLevel level, const char* tag, const SrsContextId& context_id, const char* fmt, va_list args) = 0;
 };
 
-// The logic context, for example, a RTMP connection. We can grep the context id
+// The logic context, for example, an RTMP connection. We can grep the context id
 // in logs to identify all logs of one connection, for debugging.
 class ISrsContext
 {
@@ -54,11 +54,11 @@ public:
     virtual ~ISrsContext();
 public:
     // Generate a new context id.
-    // @remark We do not set to current thread, user should do this.
+    // @remark We do not set it on the current thread, the user should do this.
     virtual SrsContextId generate_id() = 0;
-    // Get the context id of current thread.
+    // Get the context id of the current thread.
     virtual const SrsContextId& get_id() = 0;
-    // Set the context id of current thread.
+    // Set the context id of the current thread.
     virtual const SrsContextId& set_id(const SrsContextId& v) = 0;
 };
 
@@ -76,7 +76,7 @@ public:
     virtual const SrsContextId& set_id(const SrsContextId& v);
 };
 
-// The basic console log, which write log to console.
+// The basic console log, which writes logs to the console.
 class SrsConsoleLog : public ISrsLog
 {
 private:

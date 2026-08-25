@@ -11,7 +11,7 @@
 #include <srs_app_conn.hpp>
 #include <srs_app_listener.hpp>
 
-// SRS RTMP server, initialize and listen, start connection service thread, destroy client.
+// SRS RTMP server: initialize and listen, start the connection service thread, destroy clients.
 class SrsServer : public ISrsResourceManager, public ISrsTcpHandler
 {
 private:
@@ -29,7 +29,7 @@ public:
 public:
     // Start the conn manager coroutine.
     virtual srs_error_t initialize();
-    // Listen the RTMP/HTTP ports and start the accept coroutines.
+    // Listen on the RTMP/HTTP ports and start the accept coroutines.
     virtual srs_error_t listen();
 // Interface ISrsTcpHandler
 public:
@@ -38,8 +38,8 @@ private:
     virtual srs_error_t do_on_tcp_client(ISrsListener* listener, srs_netfd_t& stfd);
 // Interface ISrsResourceManager
 public:
-    // A callback for connection to remove itself.
-    // When connection thread cycle terminated, callback this to delete connection.
+    // A callback for a connection to remove itself.
+    // When the connection thread cycle terminates, call this back to delete the connection.
     virtual void remove(ISrsResource* c);
 };
 

@@ -5,7 +5,7 @@
 #include <stdint.h>
 #include <string>
 
-// The project informations, sent to client in RTMP connect response.
+// The project information, sent to the client in the RTMP connect response.
 #define RTMP_SIG_SRS_KEY "SRS_SIMPLE"
 #define RTMP_SIG_SRS_VERSION "0.1.0"
 #define RTMP_SIG_SRS_SERVER RTMP_SIG_SRS_KEY "/" RTMP_SIG_SRS_VERSION

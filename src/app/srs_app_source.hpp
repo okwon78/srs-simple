@@ -38,8 +38,8 @@ class SrsLlHls;
 class SrsLlHlsStorage;
 
 // The time jitter algorithm:
-// 1. full, to ensure stream start at zero, and ensure stream monotonically increasing.
-// 2. zero, only ensure stream start at zero, ignore timestamp jitter.
+// 1. full, to ensure the stream starts at zero, and ensure the stream increases monotonically.
+// 2. zero, only ensure the stream starts at zero, ignore timestamp jitter.
 // 3. off, disable the time jitter algorithm, like atc.
 enum SrsRtmpJitterAlgorithm
 {
@@ -48,7 +48,7 @@ enum SrsRtmpJitterAlgorithm
     SrsRtmpJitterAlgorithmOFF
 };
 
-// Time jitter detect and correct, to ensure the rtmp stream is monotonically.
+// Detect and correct the time jitter, to ensure the rtmp stream is monotonic.
 // consumer마다 개별 소유 — 입력 타임스탬프의 절대값을 믿지 않고 위생 처리한 델타를
 // 누적해 0부터 시작하는 출력 타임라인을 재구성한다 (CLAUDE.md §4.2).
 class SrsRtmpJitter
@@ -63,7 +63,7 @@ public:
     // detect the time jitter and correct it.
     // @param ag the algorithm to use for time jitter.
     virtual srs_error_t correct(SrsSharedPtrMessage* msg, SrsRtmpJitterAlgorithm ag);
-    // Get current client time, the last packet time.
+    // Get the current client time, the last packet time.
     virtual int64_t get_time();
 };
 
@@ -76,40 +76,40 @@ private:
     srs_utime_t av_start_time;
     srs_utime_t av_end_time;
 private:
-    // Whether do logging when shrinking.
+    // Whether to log when shrinking.
     bool _ignore_shrink;
-    // The max queue size, shrink if exceed it.
+    // The max queue size, shrink if it is exceeded.
     srs_utime_t max_queue_size;
     std::vector<SrsSharedPtrMessage*> msgs;
 public:
     SrsMessageQueue(bool ignore_shrink = false);
     virtual ~SrsMessageQueue();
 public:
-    // Get the size of queue.
+    // Get the size of the queue.
     virtual int size();
-    // Get the duration of queue.
+    // Get the duration of the queue.
     virtual srs_utime_t duration();
     // Set the queue size
     // @param queue_size the queue size in srs_utime_t.
     virtual void set_queue_size(srs_utime_t queue_size);
 public:
-    // Enqueue the message, the timestamp always monotonically.
-    // @param msg, the msg to enqueue, user never free it whatever the return code.
-    // @param is_overflow, whether overflow and shrinked. NULL to ignore.
+    // Enqueue the message, the timestamp is always monotonic.
+    // @param msg, the msg to enqueue, the user never frees it whatever the return code.
+    // @param is_overflow, whether it overflowed and was shrunk. NULL to ignore.
     virtual srs_error_t enqueue(SrsSharedPtrMessage* msg, bool* is_overflow = NULL);
-    // Get packets in consumer queue.
-    // @pmsgs SrsSharedPtrMessage*[], used to store the msgs, user must alloc it.
-    // @count the count in array, output param.
+    // Get packets in the consumer queue.
+    // @pmsgs SrsSharedPtrMessage*[], used to store the msgs, the user must alloc it.
+    // @count the count in the array, output param.
     // @max_count the max count to dequeue, must be positive.
     virtual srs_error_t dump_packets(int max_count, SrsSharedPtrMessage** pmsgs, int& count);
-    // Dumps packets to consumer, use specified args.
+    // Dumps packets to the consumer, using the specified args.
     virtual srs_error_t dump_packets(SrsLiveConsumer* consumer, SrsRtmpJitterAlgorithm ag);
 private:
     // 느린 소비자 정책: 오래된 N개를 버리는 게 아니라 전체를 비우고 최신 시퀀스
     // 헤더만 재주입 — 뒤처진 플레이어를 라이브 시점으로 스냅 (CLAUDE.md §4.2).
     virtual void shrink();
 public:
-    // clear all messages in queue.
+    // clear all messages in the queue.
     virtual void clear();
 };
 
@@ -119,12 +119,12 @@ public:
 class SrsLiveConsumer
 {
 private:
-    // Because source references to this object, so we should directly use the source ptr.
+    // Because the source references this object, we should directly use the source ptr.
     SrsLiveSource* source_;
 private:
     SrsRtmpJitter* jitter;
     SrsMessageQueue* queue;
-    // when source id changed, notice all consumers
+    // when the source id changes, notify all consumers
     bool should_update_source_id;
 private:
     // The cond wait for mw(merged-write).
@@ -138,51 +138,51 @@ public:
     SrsLiveConsumer(SrsLiveSource* s);
     virtual ~SrsLiveConsumer();
 public:
-    // Set the size of queue.
+    // Set the size of the queue.
     virtual void set_queue_size(srs_utime_t queue_size);
-    // when source id changed, notice client to print.
+    // when the source id changes, notify the client to print.
     virtual void update_source_id();
 public:
-    // Get current client time, the last packet time.
+    // Get the current client time, the last packet time.
     virtual int64_t get_time();
-    // Enqueue an shared ptr message.
-    // @param shared_msg, directly ptr, copy it if need to save it.
+    // Enqueue a shared ptr message.
+    // @param shared_msg, a direct ptr, copy it if you need to save it.
     // @param ag the algorithm of time jitter.
     virtual srs_error_t enqueue(SrsSharedPtrMessage* shared_msg, SrsRtmpJitterAlgorithm ag);
-    // Get packets in consumer queue.
+    // Get packets in the consumer queue.
     // @param msgs the msgs array to dump packets to send.
-    // @param count the count in array, intput and output param.
-    // @remark user can specifies the count to get specified msgs; 0 to get all if possible.
+    // @param count the count in the array, input and output param.
+    // @remark the user can specify the count to get the specified msgs; 0 to get all if possible.
     virtual srs_error_t dump_packets(SrsMessageArray* msgs, int& count);
-    // wait for messages incomming, atleast nb_msgs and in duration.
+    // wait for incoming messages, at least nb_msgs and within duration.
     // 원본은 enqueue가 깨울 때까지 무한 대기(수신 코루틴이 별도 존재) — pthread에서는
     // 100ms 타임아웃으로 깨어나 호출자가 pull()/컨트롤 메시지를 재확인한다 (CLAUDE.md §5.1).
-    // @param nb_msgs the messages count to wait.
-    // @param msgs_duration the messages duration to wait.
+    // @param nb_msgs the message count to wait for.
+    // @param msgs_duration the messages duration to wait for.
     virtual void wait(int nb_msgs, srs_utime_t msgs_duration);
 };
 
-// cache a gop of video/audio data,
-// delivery at the connect of flash player,
-// To enable it to fast startup.
+// Cache a gop of video/audio data,
+// delivered when a flash player connects,
+// to enable fast startup.
 class SrsGopCache
 {
 private:
-    // if disabled the gop cache,
-    // The client will wait for the next keyframe for h264,
-    // and will be black-screen.
+    // if the gop cache is disabled,
+    // the client will wait for the next keyframe for h264,
+    // and the screen will be black.
     bool enable_gop_cache;
-    // to limit the max gop cache frames
-    // without this limit, if ingest stream always has no IDR frame
-    // it will cause srs run out of memory
+    // to limit the max gop cache frames.
+    // without this limit, if the ingest stream never has an IDR frame,
+    // it will cause srs to run out of memory.
     int gop_cache_max_frames_;
-    // The video frame count, avoid cache for pure audio stream.
+    // The video frame count, to avoid caching for a pure audio stream.
     int cached_video_count;
-    // when user disabled video when publishing, and gop cache enalbed,
-    // We will cache the audio/video for we already got video, but we never
-    // know when to clear the gop cache, for there is no video in future,
-    // so we must guess whether user disabled the video.
-    // when we got some audios after laster video, for instance, 600 audio packets,
+    // when the user disabled video while publishing, and the gop cache is enabled,
+    // we will cache the audio/video because we already got video, but we never
+    // know when to clear the gop cache, for there is no video in the future,
+    // so we must guess whether the user disabled the video.
+    // when we got some audios after the last video, for instance, 600 audio packets,
     // about 3s(26ms per packet) 115 audio packets, clear gop cache.
     // @see: https://github.com/ossrs/srs/issues/124
     int audio_after_last_video_count;
@@ -196,26 +196,26 @@ public:
     virtual void set(bool v);
     virtual void set_gop_cache_max_frames(int v);
     virtual bool enabled();
-    // only for h264 codec
-    // 1. cache the gop when got h264 video packet.
-    // 2. clear gop when got keyframe.
-    // @param shared_msg, directly ptr, copy it if need to save it.
+    // only for the h264 codec
+    // 1. cache the gop when we get an h264 video packet.
+    // 2. clear the gop when we get a keyframe.
+    // @param shared_msg, a direct ptr, copy it if you need to save it.
     virtual srs_error_t cache(SrsSharedPtrMessage* shared_msg);
     // clear the gop cache.
     virtual void clear();
-    // dump the cached gop to consumer.
+    // dump the cached gop to the consumer.
     virtual srs_error_t dump(SrsLiveConsumer* consumer, SrsRtmpJitterAlgorithm jitter_algorithm);
     virtual bool empty();
-    // Get the start time of gop cache, in srs_utime_t.
+    // Get the start time of the gop cache, in srs_utime_t.
     // @return 0 if no packets.
     virtual srs_utime_t start_time();
-    // whether current stream is pure audio,
-    // when no video in gop cache, the stream is pure audio right now.
+    // whether the current stream is pure audio,
+    // when there is no video in the gop cache, the stream is pure audio right now.
     virtual bool pure_audio();
 };
 
-// Each stream have optional meta(sps/pps in sequence header and metadata).
-// This class cache and update the meta.
+// Each stream has optional meta(sps/pps in the sequence header and metadata).
+// This class caches and updates the meta.
 // 중간 입장 플레이어가 즉시 디코딩을 시작할 수 있는 이유 (CLAUDE.md §4.2):
 // onMetaData(해상도/코덱) + AVC 시퀀스 헤더(SPS/PPS) + AAC 시퀀스 헤더는
 // publish 직후 한 번만 오므로, 캐시 없이는 늦게 온 플레이어가 영원히 못 받는다.
@@ -241,13 +241,13 @@ public:
     virtual SrsSharedPtrMessage* vsh();
     // Get the cached ash(audio sequence header).
     virtual SrsSharedPtrMessage* ash();
-    // Dumps cached metadata to consumer.
-    // @param dm Whether dumps the metadata.
-    // @param ds Whether dumps the sequence header.
+    // Dumps the cached metadata to the consumer.
+    // @param dm Whether to dump the metadata.
+    // @param ds Whether to dump the sequence header.
     // audio를 video보다 먼저 — 원본 :1636 주석 (hls가 audio 코덱을 빨리 파싱하도록).
     virtual srs_error_t dumps(SrsLiveConsumer* consumer, SrsRtmpJitterAlgorithm ag, bool dm, bool ds);
 public:
-    // Update the cached metadata by packet.
+    // Update the cached metadata by the packet.
     virtual srs_error_t update_data(SrsMessageHeader* header, SrsOnMetaDataPacket* metadata, bool& updated);
     // Update the cached audio sequence header.
     virtual srs_error_t update_ash(SrsSharedPtrMessage* msg);
@@ -277,22 +277,22 @@ public:
     SrsOriginHub();
     virtual ~SrsOriginHub();
 public:
-    // Initialize the hub with source and request.
-    // @param r The request object, managed by source.
+    // Initialize the hub with the source and request.
+    // @param r The request object, managed by the source.
     virtual srs_error_t initialize(SrsLiveSource* s, SrsRequest* r);
-    // Whether the stream hub is active, or stream is publishing.
+    // Whether the stream hub is active, or the stream is publishing.
     virtual bool active();
     // The LL-HLS storage for HTTP serving (S15). 포인터는 hub 수명 동안 불변이라
     // 락 없이 읽어도 된다 — HTTP 스레드는 storage 자체 락만 잡는다 (락 규율).
     virtual SrsLlHlsStorage* llhls_storage();
 public:
-    // When got a parsed audio/video packet.
+    // When we get a parsed audio/video packet.
     virtual srs_error_t on_audio(SrsSharedPtrMessage* shared_audio);
     virtual srs_error_t on_video(SrsSharedPtrMessage* shared_video, bool is_sequence_header);
 public:
-    // When start publish stream.
+    // When the stream starts publishing.
     virtual srs_error_t on_publish();
-    // When stop publish stream.
+    // When the stream stops publishing.
     virtual void on_unpublish();
 };
 
@@ -308,11 +308,11 @@ public:
     SrsLiveSourceManager();
     virtual ~SrsLiveSourceManager();
 public:
-    //  create source when fetch from cache failed.
+    //  create the source when the fetch from cache failed.
     // @param r the client request.
-    // @param pps the matched source, if success never be NULL.
+    // @param pps the matched source, on success it is never NULL.
     virtual srs_error_t fetch_or_create(SrsRequest* r, SrsLiveSource** pps);
-    // Get the exists source, NULL when not exists.
+    // Get the existing source, NULL when it does not exist.
     virtual SrsLiveSource* fetch(SrsRequest* r);
     // Get the exists source by app/stream, ignoring vhost (S15 HTTP 라우팅용).
     // HTTP 경로에는 vhost가 없고 srs_simple은 단일 vhost 서버다 — RTMP 접속
@@ -332,25 +332,25 @@ class SrsLiveSource
     friend class SrsLiveConsumer;
 private:
     // For publish, it's the publish client id.
-    // when source id changed, for example, the encoder reconnect,
+    // when the source id changes, for example, the encoder reconnects,
     // invoke the on_source_id_changed() to let all clients know.
     SrsContextId _source_id;
     // previous source id.
     SrsContextId _pre_source_id;
-    // deep copy of client request.
+    // deep copy of the client request.
     SrsRequest* req;
-    // To delivery stream to clients.
+    // To deliver the stream to clients.
     std::vector<SrsLiveConsumer*> consumers;
     // The time jitter algorithm for vhost.
     SrsRtmpJitterAlgorithm jitter_algorithm;
-    // The gop cache for client fast startup.
+    // The gop cache for fast client startup.
     SrsGopCache* gop_cache;
     // The metadata cache.
     SrsMetaCache* meta;
     // The hub for origin server: RTMP 밖(HLS)으로 가는 분기점 (S10).
     SrsOriginHub* hub;
 private:
-    // Whether source is avaiable for publishing.
+    // Whether the source is available for publishing.
     bool can_publish_;
     // pthread: 위 상태 전부를 보호한다. 락 순서는 항상 source → consumer.
     std::mutex lock_;
@@ -358,10 +358,10 @@ public:
     SrsLiveSource();
     virtual ~SrsLiveSource();
 public:
-    // Initialize the live source with request.
+    // Initialize the live source with the request.
     virtual srs_error_t initialize(SrsRequest* r);
 public:
-    // Get current source id.
+    // Get the current source id.
     virtual SrsContextId source_id();
     virtual SrsContextId pre_source_id();
 public:
@@ -383,7 +383,7 @@ private:
     // The source id changed. 호출자가 lock_을 잡고 있어야 한다.
     virtual srs_error_t on_source_id_changed(SrsContextId id);
 public:
-    // Publish stream event notify.
+    // Publish stream event notification.
     // 원본은 conn의 acquire_publish가 can_publish 검사 후 호출하지만(단일 스레드라 원자적),
     // pthread에서는 검사+점유가 여기서 원자적으로 일어난다 — 이미 publish 중이면
     // ERROR_SYSTEM_STREAM_BUSY 반환 (CLAUDE.md §5.6).
@@ -391,14 +391,14 @@ public:
     virtual void on_unpublish();
 public:
     // Create consumer
-    // @param consumer, output the create consumer.
+    // @param consumer, output the created consumer.
     virtual srs_error_t create_consumer(SrsLiveConsumer*& consumer);
-    // Dumps packets in cache to consumer.
+    // Dumps packets in the cache to the consumer.
     // ★ 반드시 송신 루프 시작 전에 호출 — 순서가 바뀌면 새 플레이어의 첫 바이트가
     // SPS/PPS 없는 GOP 중간이 된다 (CLAUDE.md §5.3).
-    // @param ds, whether dumps the sequence header.
-    // @param dm, whether dumps the metadata.
-    // @param dg, whether dumps the gop cache.
+    // @param ds, whether to dump the sequence header.
+    // @param dm, whether to dump the metadata.
+    // @param dg, whether to dump the gop cache.
     virtual srs_error_t consumer_dumps(SrsLiveConsumer* consumer, bool ds = true, bool dm = true, bool dg = true);
     virtual void on_consumer_destroy(SrsLiveConsumer* consumer);
     virtual void set_cache(bool enabled);

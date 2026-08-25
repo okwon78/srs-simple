@@ -33,7 +33,7 @@ bool SrsFlvVideo::keyframe(char* data, int size)
 
 bool SrsFlvVideo::sh(char* data, int size)
 {
-    // Sequence header only for H.264.
+    // Sequence header is only for H.264.
     if (!h264(data, size)) {
         return false;
     }
@@ -74,7 +74,7 @@ SrsFlvAudio::~SrsFlvAudio()
 
 bool SrsFlvAudio::sh(char* data, int size)
 {
-    // Sequence header only for AAC.
+    // Sequence header is only for AAC.
     if (!aac(data, size)) {
         return false;
     }
@@ -522,7 +522,7 @@ srs_error_t SrsFormat::avc_demux_sps_pps(SrsBuffer* stream)
     return err;
 }
 
-// Remove the emulation bytes from stream, and return num of bytes of the rbsp.
+// Remove the emulation bytes from the stream, and return the number of bytes of the rbsp.
 // (원본 srs_kernel_codec.cpp:885 — 00 00 03 xx의 03 제거)
 static int srs_rbsp_remove_emulation_bytes(SrsBuffer* stream, std::vector<uint8_t>& rbsp)
 {
@@ -530,7 +530,7 @@ static int srs_rbsp_remove_emulation_bytes(SrsBuffer* stream, std::vector<uint8_
     while (!stream->empty()) {
         rbsp[nb_rbsp] = stream->read_1bytes();
 
-        // .. 00 00 03 xx, the 03 byte should be drop where xx represents any
+        // .. 00 00 03 xx, the 03 byte should be dropped where xx represents any
         // 2 bit pattern: 00, 01, 10, or 11.
         if (nb_rbsp >= 2 && rbsp[nb_rbsp - 2] == 0 && rbsp[nb_rbsp - 1] == 0 && rbsp[nb_rbsp] == 3) {
             // read 1byte more.
@@ -643,7 +643,7 @@ srs_error_t SrsFormat::avc_demux_sps()
         return srs_error_new(ERROR_HLS_DECODE_ERROR, "for sps, nal_unit_type shall be equal to 7");
     }
 
-    // decode the rbsp from sps.
+    // decode the rbsp from the sps.
     // rbsp[ i ] a raw byte sequence payload is specified as an ordered sequence of bytes.
     std::vector<uint8_t> rbsp(vcodec->sequenceParameterSetNALUnit.size());
     int nb_rbsp = srs_rbsp_remove_emulation_bytes(&stream, rbsp);

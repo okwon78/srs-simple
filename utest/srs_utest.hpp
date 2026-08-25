@@ -2,7 +2,7 @@
 #ifndef SRS_UTEST_PUBLIC_SHARED_HPP
 #define SRS_UTEST_PUBLIC_SHARED_HPP
 
-// Before define the private/protected, we must include some system header files.
+// Before defining private/protected, we must include some system header files.
 // Or it may fail with:
 //      redeclared with different access struct __xfer_bufptrs
 // @see https://stackoverflow.com/questions/47839718/sstream-redeclared-with-public-access-compiler-error
@@ -12,7 +12,7 @@
 #include <mutex>
 #include <vector>
 
-// Public all private and protected members.
+// Make all private and protected members public.
 #define private public
 #define protected public
 
@@ -26,7 +26,7 @@ using namespace std;
 #define VOID
 
 // For errors.
-// @remark we directly delete the err, because we allow user to append message if fail.
+// @remark we directly delete the err, because we allow the user to append a message on failure.
 #define HELPER_EXPECT_SUCCESS(x) \
     if ((err = x) != srs_success) fprintf(stderr, "err %s", srs_error_desc(err).c_str()); \
     if (err != srs_success) delete err; \
@@ -44,7 +44,7 @@ using namespace std;
     if ((err = x) != srs_success) delete err; \
     ASSERT_TRUE(srs_success != err)
 
-// For init array data.
+// For initializing array data.
 #define HELPER_ARRAY_INIT(buf, sz, val) \
     for (int _iii = 0; _iii < (int)sz; _iii++) (buf)[_iii] = val
 

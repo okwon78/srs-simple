@@ -18,9 +18,9 @@ public:
     // The send/recv data in bytes.
     int64_t rbytes;
     int64_t sbytes;
-    // data source for socket read.
+    // The data source for socket reads.
     SrsSimpleStream in_buffer;
-    // data buffer for socket send.
+    // The data buffer for socket sends.
     SrsSimpleStream out_buffer;
 public:
     // Mock error for io.

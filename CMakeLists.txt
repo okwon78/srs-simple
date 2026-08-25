@@ -12,7 +12,9 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Debug)
 endif()
-add_compile_options(-Wall -Wextra -Wno-unused-parameter)
+# -Werror=parentheses: `if (x = C)` 오타를 경고가 아니라 에러로 만든다.
+# Yoda 조건(`C == x`)이 지키려던 것을 컴파일러가 대신하므로 코드는 원본 SRS와 같은 방향을 유지한다.
+add_compile_options(-Wall -Wextra -Wno-unused-parameter -Werror=parentheses)
 
 find_package(Threads REQUIRED)
 

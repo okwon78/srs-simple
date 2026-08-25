@@ -140,7 +140,7 @@ srs_error_t SrsHlsMuxer::segment_open()
     current = new SrsHlsSegment(context, default_acodec, default_vcodec, writer);
     current->sequence_no = _sequence_no++;
 
-    // generate filename.
+    // generate the filename.
     string ts_file = srs_path_build_stream(hls_ts_file, req->vhost, req->app, req->stream);
     if (true) {
         std::stringstream ss;
@@ -155,7 +155,7 @@ srs_error_t SrsHlsMuxer::segment_open()
         current->uri = ts_file.substr(m3u8_dir.length() + 1);
     }
 
-    // create dir recursively for ts file.
+    // create the dir recursively for the ts file.
     if ((err = current->create_dir()) != srs_success) {
         return srs_error_wrap(err, "create dir");
     }
@@ -177,8 +177,8 @@ srs_error_t SrsHlsMuxer::on_sequence_header()
 {
     srs_assert(current);
 
-    // set the current segment to sequence header,
-    // when close the segement, it will write a discontinuity to m3u8 file.
+    // set the current segment as a sequence header segment,
+    // when the segment is closed, it will write a discontinuity to the m3u8 file.
     current->set_sequence_header(true);
 
     return srs_success;
@@ -188,7 +188,7 @@ bool SrsHlsMuxer::is_segment_overflow()
 {
     srs_assert(current);
 
-    // to prevent very small segment.
+    // to prevent a very small segment.
     if (current->duration() < 2 * SRS_HLS_SEGMENT_MIN_DURATION) {
         return false;
     }
@@ -206,7 +206,7 @@ bool SrsHlsMuxer::is_segment_absolutely_overflow()
 {
     srs_assert(current);
 
-    // to prevent very small segment.
+    // to prevent a very small segment.
     if (current->duration() < 2 * SRS_HLS_SEGMENT_MIN_DURATION) {
         return false;
     }
@@ -243,7 +243,7 @@ srs_error_t SrsHlsMuxer::flush_audio(SrsTsMessageCache* cache)
 {
     srs_error_t err = srs_success;
 
-    // if current is NULL, segment is not open, ignore the flush event.
+    // if current is NULL, the segment is not open, ignore the flush event.
     if (!current) {
         srs_warn("flush audio ignored, for segment is not open.");
         return err;
@@ -253,7 +253,7 @@ srs_error_t SrsHlsMuxer::flush_audio(SrsTsMessageCache* cache)
         return err;
     }
 
-    // update the duration of segment.
+    // update the duration of the segment.
     update_duration(cache->audio->dts);
 
     if ((err = current->tscw->write_audio(cache->audio)) != srs_success) {
@@ -270,7 +270,7 @@ srs_error_t SrsHlsMuxer::flush_video(SrsTsMessageCache* cache)
 {
     srs_error_t err = srs_success;
 
-    // if current is NULL, segment is not open, ignore the flush event.
+    // if current is NULL, the segment is not open, ignore the flush event.
     if (!current) {
         srs_warn("flush video ignored, for segment is not open.");
         return err;
@@ -280,7 +280,7 @@ srs_error_t SrsHlsMuxer::flush_video(SrsTsMessageCache* cache)
         return err;
     }
 
-    // update the duration of segment.
+    // update the duration of the segment.
     update_duration(cache->video->dts);
 
     if ((err = current->tscw->write_video(cache->video)) != srs_success) {
@@ -303,7 +303,7 @@ srs_error_t SrsHlsMuxer::segment_close()
 {
     srs_error_t err = do_segment_close();
 
-    // We always cleanup current segment.
+    // We always clean up the current segment.
     srs_freep(current);
 
     return err;
@@ -323,14 +323,14 @@ srs_error_t SrsHlsMuxer::do_segment_close()
         return err;
     }
 
-    // We should always close the underlayer writer.
+    // We should always close the underlying writer.
     if (current && current->writer) {
         current->writer->close();
     }
 
-    // valid, add to segments if segment duration is ok
-    // when too small, it maybe not enough data to play.
-    // when too large, it maybe timestamp corrupt.
+    // valid, add to segments if the segment duration is ok
+    // when too small, there may not be enough data to play.
+    // when too large, the timestamp may be corrupt.
     // make the segment more acceptable, when in [min, max_td * 3], it's ok.
     bool matchMinDuration = current->duration() >= SRS_HLS_SEGMENT_MIN_DURATION;
     bool matchMaxDuration = current->duration() <= max_td * 3 * 1000;
@@ -342,13 +342,13 @@ srs_error_t SrsHlsMuxer::do_segment_close()
 
         // 원본은 여기서 on_hls/on_hls_notify 훅을 async로 실행 — 훅 제거 (CLAUDE.md §5.6 S10).
 
-        // close the muxer of finished segment.
+        // close the muxer of the finished segment.
         srs_freep(current->tscw);
 
         segments->append(current);
         current = NULL;
     } else {
-        // reuse current segment index.
+        // reuse the current segment index.
         _sequence_no--;
 
         srs_trace("Drop ts segment, sequence_no=%d, uri=%s, duration=%dms",
@@ -363,13 +363,13 @@ srs_error_t SrsHlsMuxer::do_segment_close()
     // shrink the segments.
     segments->shrink(hls_window);
 
-    // refresh the m3u8, donot contains the removed ts
+    // refresh the m3u8, do not contain the removed ts
     err = refresh_m3u8();
 
     // remove the ts file.
     segments->clear_expired(hls_cleanup);
 
-    // check ret of refresh m3u8
+    // check the result of refreshing the m3u8
     if (err != srs_success) {
         return srs_error_wrap(err, "hls: refresh m3u8");
     }
@@ -588,11 +588,11 @@ srs_error_t SrsHlsController::write_video(SrsVideoFrame* frame, int64_t dts)
     // cover from the first frame to the last frame.
     muxer->update_duration(tsmc->video->dts);
 
-    // when segment overflow, reap if possible.
+    // when the segment overflows, reap if possible.
     if (muxer->is_segment_overflow()) {
         // do reap ts if any of:
-        //      a. wait keyframe and got keyframe.
-        //      b. always reap when not wait keyframe.
+        //      a. we wait for a keyframe and got a keyframe.
+        //      b. always reap when not waiting for a keyframe.
         if (!muxer->wait_keyframe() || frame->frame_type == SrsVideoAvcFrameTypeKeyFrame) {
             // reap the segment, which will also flush the video.
             if ((err = reap_segment()) != srs_success) {
@@ -601,7 +601,7 @@ srs_error_t SrsHlsController::write_video(SrsVideoFrame* frame, int64_t dts)
         }
     }
 
-    // flush video when got one
+    // flush the video when we got one
     if ((err = muxer->flush_video(tsmc)) != srs_success) {
         return srs_error_wrap(err, "hls: flush video");
     }
@@ -613,9 +613,9 @@ srs_error_t SrsHlsController::reap_segment()
 {
     srs_error_t err = srs_success;
 
-    // close current ts.
+    // close the current ts.
     if ((err = muxer->segment_close()) != srs_success) {
-        // When close segment error, we must reopen it for next packet to write.
+        // When closing the segment fails, we must reopen it for the next packet to write.
         srs_error_t r0 = muxer->segment_open();
         if (r0 != srs_success) {
             srs_warn("close segment err %s", srs_error_desc(r0).c_str());
@@ -625,17 +625,17 @@ srs_error_t SrsHlsController::reap_segment()
         return srs_error_wrap(err, "hls: segment close");
     }
 
-    // open new ts.
+    // open a new ts.
     if ((err = muxer->segment_open()) != srs_success) {
         return srs_error_wrap(err, "hls: segment open");
     }
 
-    // segment open, flush video first.
+    // the segment is open, flush the video first.
     if ((err = muxer->flush_video(tsmc)) != srs_success) {
         return srs_error_wrap(err, "hls: flush video");
     }
 
-    // segment open, flush the audio.
+    // the segment is open, flush the audio.
     // @see: ngx_rtmp_hls_open_fragment
     /* start fragment with audio to make iPhone happy */
     if ((err = muxer->flush_audio(tsmc)) != srs_success) {
@@ -677,7 +677,7 @@ srs_error_t SrsHls::on_publish()
 {
     srs_error_t err = srs_success;
 
-    // update the hls time, for hls never init.
+    // update the hls time, for hls was never initialized.
     if (!_srs_config->hls_enabled) {
         return err;
     }
@@ -687,7 +687,7 @@ srs_error_t SrsHls::on_publish()
         return srs_error_wrap(err, "hls: on publish");
     }
 
-    // ok, the hls can be dispose, or need to be dispose.
+    // ok, the hls can be disposed, or needs to be disposed.
     enabled = true;
 
     return err;

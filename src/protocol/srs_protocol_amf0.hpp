@@ -16,7 +16,7 @@ class SrsBuffer;
 class SrsAmf0Object;
 class SrsAmf0EcmaArray;
 
-// internal objects, user should never use it.
+// internal objects, the user should never use them.
 namespace srs_internal
 {
     class SrsUnSortedHashtable;
@@ -60,7 +60,7 @@ public:
 public:
     SrsAmf0Any();
     virtual ~SrsAmf0Any();
-    // type identify, user should identify the type then convert from/to value.
+    // type identification, the user should identify the type then convert from/to the value.
 public:
     virtual bool is_string();
     virtual bool is_boolean();
@@ -70,30 +70,30 @@ public:
     virtual bool is_object();
     virtual bool is_object_eof();
     virtual bool is_ecma_array();
-    // whether current instance is an AMF0 object, object-EOF or ecma-array.
+    // whether the current instance is an AMF0 object, object-EOF or ecma-array.
     virtual bool is_complex_object();
-    // get value of instance
+    // get the value of the instance
 public:
-    // get a string copy of instance.
-    // @remark assert is_string(), user must ensure the type then convert.
+    // get a string copy of the instance.
+    // @remark assert is_string(), the user must ensure the type then convert.
     virtual std::string to_str();
     virtual const char* to_str_raw();
     virtual bool to_boolean();
     virtual double to_number();
     virtual SrsAmf0Object* to_object();
     virtual SrsAmf0EcmaArray* to_ecma_array();
-    // set value of instance
+    // set the value of the instance
 public:
     // set the number of any when is_number() indicates true.
     virtual void set_number(double value);
-    // serialize/deseriaize instance.
+    // serialize/deserialize the instance.
 public:
-    // get the size of amf0 any, including the marker size.
+    // get the size of the amf0 any, including the marker size.
     virtual int total_size() = 0;
     virtual srs_error_t read(SrsBuffer* stream) = 0;
     virtual srs_error_t write(SrsBuffer* stream) = 0;
     virtual SrsAmf0Any* copy() = 0;
-    // create AMF0 instance.
+    // create an AMF0 instance.
 public:
     static SrsAmf0Any* str(const char* value = NULL);
     static SrsAmf0Any* boolean(bool value = false);
@@ -103,12 +103,12 @@ public:
     static SrsAmf0Object* object();
     static SrsAmf0Any* object_eof();
     static SrsAmf0EcmaArray* ecma_array();
-    // discovery instance from stream
+    // discover the instance from the stream
 public:
     /**
-     * discovery AMF0 instance from stream
-     * @param ppvalue, output the discoveried AMF0 instance. NULL if error.
-     * @remark, instance is created without read from stream, user must
+     * discover the AMF0 instance from the stream
+     * @param ppvalue, output the discovered AMF0 instance. NULL if error.
+     * @remark, the instance is created without reading from the stream, the user must
      *       use (*ppvalue)->read(stream) to get the instance.
      */
     static srs_error_t discovery(SrsBuffer* stream, SrsAmf0Any** ppvalue);
@@ -130,7 +130,7 @@ private:
     SrsAmf0Object();
 public:
     virtual ~SrsAmf0Object();
-    // serialize/deserialize to/from stream.
+    // serialize/deserialize to/from the stream.
 public:
     virtual int total_size();
     virtual srs_error_t read(SrsBuffer* stream);
@@ -146,10 +146,10 @@ public:
     virtual SrsAmf0Any* value_at(int index);
     // property set/get.
 public:
-    // @remark user should never free the value, this instance will manage it.
+    // @remark the user should never free the value, this instance will manage it.
     virtual void set(std::string key, SrsAmf0Any* value);
     // @return the property AMF0 value, NULL if not found.
-    // @remark user should never free the returned value, copy it if needed.
+    // @remark the user should never free the returned value, copy it if needed.
     virtual SrsAmf0Any* get_property(std::string name);
     // get the string property, ensure the property is_string().
     virtual SrsAmf0Any* ensure_property_string(std::string name);
@@ -177,7 +177,7 @@ private:
     SrsAmf0EcmaArray();
 public:
     virtual ~SrsAmf0EcmaArray();
-    // serialize/deserialize to/from stream.
+    // serialize/deserialize to/from the stream.
 public:
     virtual int total_size();
     virtual srs_error_t read(SrsBuffer* stream);
@@ -199,7 +199,7 @@ public:
 };
 
 /**
- * the class to get amf0 object size
+ * the class to get the amf0 object size
  */
 class SrsAmf0Size
 {
@@ -217,14 +217,14 @@ public:
 };
 
 /**
- * read anything from stream.
+ * read anything from the stream.
  * @param ppvalue, the output amf0 any elem.
- *         NULL if error; otherwise, never NULL and user must free it.
+ *         NULL if error; otherwise, never NULL and the user must free it.
  */
 extern srs_error_t srs_amf0_read_any(SrsBuffer* stream, SrsAmf0Any** ppvalue);
 
 /**
- * read amf0 string from stream.
+ * read an amf0 string from the stream.
  * 2.4 String Type
  * string-type = string-marker UTF-8
  */
@@ -232,7 +232,7 @@ extern srs_error_t srs_amf0_read_string(SrsBuffer* stream, std::string& value);
 extern srs_error_t srs_amf0_write_string(SrsBuffer* stream, std::string value);
 
 /**
- * read amf0 boolean from stream.
+ * read an amf0 boolean from the stream.
  * boolean-type = boolean-marker U8
  *         0 is false, <> 0 is true
  */
@@ -240,7 +240,7 @@ extern srs_error_t srs_amf0_read_boolean(SrsBuffer* stream, bool& value);
 extern srs_error_t srs_amf0_write_boolean(SrsBuffer* stream, bool value);
 
 /**
- * read amf0 number from stream.
+ * read an amf0 number from the stream.
  * 2.2 Number Type
  * number-type = number-marker DOUBLE (8B IEEE754, BE)
  */
@@ -248,27 +248,27 @@ extern srs_error_t srs_amf0_read_number(SrsBuffer* stream, double& value);
 extern srs_error_t srs_amf0_write_number(SrsBuffer* stream, double value);
 
 /**
- * read amf0 null from stream.
+ * read an amf0 null from the stream.
  * null-type = null-marker
  */
 extern srs_error_t srs_amf0_read_null(SrsBuffer* stream);
 extern srs_error_t srs_amf0_write_null(SrsBuffer* stream);
 
 /**
- * read amf0 undefined from stream.
+ * read an amf0 undefined from the stream.
  * undefined-type = undefined-marker
  */
 extern srs_error_t srs_amf0_read_undefined(SrsBuffer* stream);
 extern srs_error_t srs_amf0_write_undefined(SrsBuffer* stream);
 
-// internal objects, user should never use it.
+// internal objects, the user should never use them.
 namespace srs_internal
 {
     /**
-     * read amf0 string from stream.
+     * read an amf0 string from the stream.
      * 2.4 String Type
      * string-type = string-marker UTF-8
-     * @return default value is empty string.
+     * @return the default value is an empty string.
      * @remark: use SrsAmf0Any::str() to create it.
      */
     class SrsAmf0String : public SrsAmf0Any
@@ -289,7 +289,7 @@ namespace srs_internal
     };
 
     /**
-     * read amf0 boolean from stream.
+     * read an amf0 boolean from the stream.
      * boolean-type = boolean-marker U8
      */
     class SrsAmf0Boolean : public SrsAmf0Any
@@ -310,7 +310,7 @@ namespace srs_internal
     };
 
     /**
-     * read amf0 number from stream.
+     * read an amf0 number from the stream.
      * number-type = number-marker DOUBLE
      */
     class SrsAmf0Number : public SrsAmf0Any
@@ -331,7 +331,7 @@ namespace srs_internal
     };
 
     /**
-     * read amf0 null from stream.
+     * read an amf0 null from the stream.
      * null-type = null-marker
      */
     class SrsAmf0Null : public SrsAmf0Any
@@ -350,7 +350,7 @@ namespace srs_internal
     };
 
     /**
-     * read amf0 undefined from stream.
+     * read an amf0 undefined from the stream.
      * undefined-type = undefined-marker
      */
     class SrsAmf0Undefined : public SrsAmf0Any
@@ -369,10 +369,10 @@ namespace srs_internal
     };
 
     /**
-     * to ensure in inserted order.
-     * for the FMLE will crash when AMF0Object is not ordered by inserted,
-     * if ordered in map, the string compare order, the FMLE will creash when
-     * get the response of connect app.
+     * to keep the insertion order.
+     * because FMLE will crash when the AMF0Object is not in insertion order,
+     * if it is ordered in a map, that is, in string compare order, FMLE will crash when
+     * it gets the response of connect app.
      */
     class SrsUnSortedHashtable
     {
@@ -389,7 +389,7 @@ namespace srs_internal
         virtual const char* key_raw_at(int index);
         virtual SrsAmf0Any* value_at(int index);
         /**
-         * set the value of hashtable.
+         * set the value of the hashtable.
          * @param value, the value to set. NULL to delete the property.
          */
         virtual void set(std::string key, SrsAmf0Any* value);
@@ -420,7 +420,7 @@ namespace srs_internal
     };
 
     /**
-     * read amf0 utf8 string from stream.
+     * read an amf0 utf8 string from the stream.
      * 1.3.1 Strings and UTF-8
      * UTF-8 = U16 *(UTF8-char)
      */

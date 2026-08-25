@@ -181,7 +181,7 @@ fmt=3  (0B)   (message header 없음)               delta 포함 전부 → 상�
 
 ```cpp
 char* pp = (char*)&chunk->header.timestamp_delta;
-pp[2] = *p++;    // 와이어의 빅엔디언 3바이트를
+pp[2] = *p++;    // 바이트 스트림의 빅엔디언 3바이트를
 pp[1] = *p++;    // 리틀엔디언 머신의 int32 메모리에
 pp[0] = *p++;    // 역순으로 꽂는다
 pp[3] = 0;
@@ -217,7 +217,7 @@ public:
 원본은 여기에 "csid < 16이면 map 대신 배열 캐시를 먼저 조회"하는 성능 최적화(`cs_cache`)를
 얹는데, srs_simple은 map만 남겼다 (CLAUDE.md §5.6) — 로직은 동일하다.
 
-이제 헤더 파싱의 본질을 한 문장으로 말할 수 있다: **read_message_header는 와이어에서 읽은
+이제 헤더 파싱의 본질을 한 문장으로 말할 수 있다: **read_message_header는 바이트 스트림에서 읽은
 필드로 `chunk->header`를 갱신하고, 생략된 필드는 갱신하지 않는 것으로 상속을 구현한다.**
 fmt=3이면 아무것도 읽지 않으니 전부 상속된다. timestamp만 누적 연산이 필요하다:
 
@@ -417,10 +417,10 @@ OBS는 접속 직후 4096을 보낸다 — 갱신을 빼먹으면 OBS의 첫 409
 
 Part 1의 인터리빙 그림이 이 상태 기계에서 어떻게 굴러가는지, utest
 `RecvInterlacedChunkStreams`([srs_utest_protocol.cpp:687-740](../utest/srs_utest_protocol.cpp#L687-L740))의
-시나리오로 따라가 보자. 와이어에 이 순서로 도착한다:
+시나리오로 따라가 보자. 네트워크로부터 이 순서로 수신한다:
 
 ```text
-와이어 도착 순서                                    chunk_streams[] 상태
+수신 바이트 순서                                    chunk_streams[] 상태
 ────────────────────────────────────────────────  ──────────────────────────
 [cid6 fmt0 hdr: video 200B][video 128B]           cid6: 128/200 — 조립 중
 [cid7 fmt0 hdr: audio   4B][audio   4B]           cid7:   4/4  — 완성 ★ 먼저 배출!
@@ -489,7 +489,7 @@ in과 out이 **독립된 협상**이라는 점을 기억하자 — 서버는 600
 원본과의 차이도 이 지점에 있다. 원본의 `do_send_messages`는 수백 개 청크의 iovec을 모아
 `writev` 한 번에 보내는 배칭(`SRS_PERF_COMPLEX_SEND`)이 겹겹이 있는 성능 코드다. srs_simple은
 청크마다 (헤더, 페이로드) 2-iov writev 한 번으로 축소했다 (CLAUDE.md §5.6) — 시스템 콜
-횟수는 늘지만 와이어에 나가는 바이트는 동일하다. 원본 `:391`을 읽을 때는 "이 2-iov 루프에
+횟수는 늘지만 네트워크로 나가는 바이트는 동일하다. 원본 `:391`을 읽을 때는 "이 2-iov 루프에
 배칭을 씌운 것"으로 읽으면 된다.
 
 ---

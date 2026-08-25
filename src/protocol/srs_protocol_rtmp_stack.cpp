@@ -20,7 +20,7 @@ using std::string;
 #define RTMP_AMF0_COMMAND_ON_FC_PUBLISH "onFCPublish"
 #define RTMP_AMF0_COMMAND_ON_FC_UNPUBLISH "onFCUnpublish"
 
-// Default stream id for response the createStream request.
+// Default stream id for responding to the createStream request.
 #define SRS_DEFAULT_SID 1
 
 // 원본: kernel/srs_kernel_utility.hpp (utility 파일을 만들지 않으므로 파일-로컬로 축소)
@@ -305,12 +305,12 @@ srs_error_t SrsProtocol::do_send_messages(SrsSharedPtrMessage **msgs, int nb_msg
             continue;
         }
 
-        // p set to current write position,
+        // p is set to the current write position,
         // it's ok when payload is NULL and size is 0.
         char *p = msg->payload;
         char *pend = msg->payload + msg->size;
 
-        // always write the header event payload is empty.
+        // always write the header even if the payload is empty.
         while (p < pend)
         {
             // for simple send, send each chunk one by one
@@ -332,7 +332,7 @@ srs_error_t SrsProtocol::do_send_messages(SrsSharedPtrMessage **msgs, int nb_msg
             iovs[1].iov_base = p;
             iovs[1].iov_len = payload_size;
 
-            // consume sendout bytes.
+            // consume the sent-out bytes.
             p += payload_size;
 
             if ((err = skt->writev(iovs, 2, NULL)) != srs_success)
@@ -393,7 +393,7 @@ srs_error_t SrsProtocol::do_decode_message(SrsMessageHeader &header, SrsBuffer *
 
     SrsPacket *packet = NULL;
 
-    // decode specified packet type
+    // decode the specified packet type
     if (header.is_amf0_command() || header.is_amf3_command() || header.is_amf0_data() || header.is_amf3_data())
     {
         // Ignore FFmpeg timecode, see https://github.com/ossrs/srs/issues/3803
@@ -403,14 +403,14 @@ srs_error_t SrsProtocol::do_decode_message(SrsMessageHeader &header, SrsBuffer *
             return err;
         }
 
-        // skip 1bytes to decode the amf3 command.
+        // skip 1 byte to decode the amf3 command.
         if (header.is_amf3_command() && stream->require(1))
         {
             stream->skip(1);
         }
 
         // amf0 command message.
-        // need to read the command name.
+        // we need to read the command name.
         std::string command;
         if ((err = srs_amf0_read_string(stream, command)) != srs_success)
         {
@@ -426,7 +426,7 @@ srs_error_t SrsProtocol::do_decode_message(SrsMessageHeader &header, SrsBuffer *
                 return srs_error_wrap(err, "decode tid for %s", command.c_str());
             }
 
-            // reset stream, for header read completed.
+            // reset the stream, for the header read is completed.
             stream->skip(-1 * stream->pos());
             if (header.is_amf3_command())
             {
@@ -461,7 +461,7 @@ srs_error_t SrsProtocol::do_decode_message(SrsMessageHeader &header, SrsBuffer *
             }
         }
 
-        // reset to zero(amf3 to 1) to restart decode.
+        // reset to zero(amf3 to 1) to restart decoding.
         stream->skip(-1 * stream->pos());
         if (header.is_amf3_command())
         {
@@ -559,11 +559,11 @@ srs_error_t SrsProtocol::send_and_free_message(SrsSharedPtrMessage *msg, int str
 
 srs_error_t SrsProtocol::send_and_free_messages(SrsSharedPtrMessage **msgs, int nb_msgs, int stream_id)
 {
-    // always not NULL msg.
+    // the msg is always not NULL.
     srs_assert(msgs);
     srs_assert(nb_msgs > 0);
 
-    // update the stream id in header.
+    // update the stream id in the header.
     for (int i = 0; i < nb_msgs; i++)
     {
         SrsSharedPtrMessage *msg = msgs[i];
@@ -573,16 +573,16 @@ srs_error_t SrsProtocol::send_and_free_messages(SrsSharedPtrMessage **msgs, int 
             continue;
         }
 
-        // check prefer cid and stream,
-        // when one msg stream id is ok, ignore left.
+        // check the prefer cid and stream,
+        // when one msg stream id is ok, ignore the rest.
         if (msg->check(stream_id))
         {
             break;
         }
     }
 
-    // donot use the auto free to free the msg,
-    // for performance issue.
+    // do not use the auto free to free the msg,
+    // for performance reasons.
     srs_error_t err = do_send_messages(msgs, nb_msgs);
 
     for (int i = 0; i < nb_msgs; i++)
@@ -625,7 +625,7 @@ srs_error_t SrsProtocol::recv_interlaced_message(SrsCommonMessage **pmsg)
         return srs_error_wrap(err, "read basic header");
     }
 
-    // the cid must not negative.
+    // the cid must not be negative.
     srs_assert(cid >= 0);
 
     // get the cached chunk stream.
@@ -635,8 +635,8 @@ srs_error_t SrsProtocol::recv_interlaced_message(SrsCommonMessage **pmsg)
     if (chunk_streams.find(cid) == chunk_streams.end())
     {
         chunk = chunk_streams[cid] = new SrsChunkStream(cid);
-        // set the prefer cid of chunk,
-        // which will copy to the message received.
+        // set the prefer cid of the chunk,
+        // which will be copied to the message received.
         chunk->header.prefer_cid = cid;
     }
     else
@@ -650,14 +650,14 @@ srs_error_t SrsProtocol::recv_interlaced_message(SrsCommonMessage **pmsg)
         return srs_error_wrap(err, "read message header");
     }
 
-    // read msg payload from chunk stream.
+    // read the msg payload from the chunk stream.
     SrsCommonMessage *msg = NULL;
     if ((err = read_message_payload(chunk, &msg)) != srs_success)
     {
         return srs_error_wrap(err, "read message payload");
     }
 
-    // not got an entire RTMP message, try next chunk.
+    // we did not get an entire RTMP message, try the next chunk.
     if (!msg)
     {
         return err;
@@ -728,8 +728,8 @@ srs_error_t SrsProtocol::read_basic_header(char &fmt, int &cid)
     if (cid > 1)
     {
         return err;
-        // 64-319, 2B chunk header
     }
+    // 64-319, 2B chunk header
     else if (cid == 0)
     {
         if ((err = in_buffer->grow(skt, 1)) != srs_success)
@@ -739,8 +739,8 @@ srs_error_t SrsProtocol::read_basic_header(char &fmt, int &cid)
 
         cid = 64;
         cid += (uint8_t)in_buffer->read_1byte();
-        // 64-65599, 3B chunk header
     }
+    // 64-65599, 3B chunk header
     else
     {
         srs_assert(cid == 1);
@@ -776,8 +776,8 @@ srs_error_t SrsProtocol::read_message_header(SrsChunkStream *chunk, char fmt)
 
     /**
      * we should not assert anything about fmt, for the first packet.
-     * (when first packet, the chunk->msg is NULL).
-     * the fmt maybe 0/1/2/3, the FMLE will send a 0xC4 for some audio packet.
+     * (for the first packet, the chunk->msg is NULL).
+     * the fmt may be 0/1/2/3, the FMLE will send a 0xC4 for some audio packets.
      * the previous packet is:
      *     04                // fmt=0, cid=4
      *     00 00 1a          // timestamp=26
@@ -786,17 +786,17 @@ srs_error_t SrsProtocol::read_message_header(SrsChunkStream *chunk, char fmt)
      *     01 00 00 00       // stream_id=1
      * the current packet maybe:
      *     c4             // fmt=3, cid=4
-     * it's ok, for the packet is audio, and timestamp delta is 26.
+     * it's ok, for the packet is audio, and the timestamp delta is 26.
      * the current packet must be parsed as:
      *     fmt=0, cid=4
      *     timestamp=26+26=52
      *     payload_length=157
      *     message_type=8(audio)
      *     stream_id=1
-     * so we must update the timestamp even fmt=3 for first packet.
+     * so we must update the timestamp even when fmt=3 for the first packet.
      */
-    // fresh packet used to update the timestamp even fmt=3 for first packet.
-    // fresh packet always means the chunk is the first one of message.
+    // a fresh packet is used to update the timestamp even when fmt=3 for the first packet.
+    // a fresh packet always means the chunk is the first one of the message.
     bool is_first_chunk_of_msg = !chunk->msg;
 
     // but, we can ensure that when a chunk stream is fresh,
@@ -804,7 +804,7 @@ srs_error_t SrsProtocol::read_message_header(SrsChunkStream *chunk, char fmt)
     if (chunk->msg_count == 0 && fmt != RTMP_FMT_TYPE0)
     {
         // for librtmp, if ping, it will send a fresh stream with fmt=1,
-        // 0x42             where: fmt=1, cid=2, protocol contorl user-control message
+        // 0x42             where: fmt=1, cid=2, protocol control user-control message
         // 0x00 0x00 0x00   where: timestamp=0
         // 0x00 0x00 0x06   where: payload_length=6
         // 0x04             where: message_type=4(protocol control user-control message)
@@ -816,25 +816,25 @@ srs_error_t SrsProtocol::read_message_header(SrsChunkStream *chunk, char fmt)
         }
         else
         {
-            // must be a RTMP protocol level error.
+            // must be an RTMP protocol level error.
             return srs_error_new(ERROR_RTMP_CHUNK_START, "fresh chunk expect fmt=0, actual=%d, cid=%d", fmt, chunk->cid);
         }
     }
 
-    // when exists cache msg, means got an partial message,
-    // the fmt must not be type0 which means new message.
+    // when a cached msg exists, it means we got a partial message,
+    // the fmt must not be type0 which means a new message.
     if (chunk->msg && fmt == RTMP_FMT_TYPE0)
     {
         return srs_error_new(ERROR_RTMP_CHUNK_START, "for existed chunk, fmt should not be 0");
     }
 
-    // create msg when new chunk stream start
+    // create the msg when a new chunk stream starts
     if (!chunk->msg)
     {
         chunk->msg = new SrsCommonMessage();
     }
 
-    // read message header from socket to buffer.
+    // read the message header from the socket into the buffer.
     static char mh_sizes[] = {11, 7, 3, 0};
     int mh_size = mh_sizes[(int)fmt];
 
@@ -878,7 +878,7 @@ srs_error_t SrsProtocol::read_message_header(SrsChunkStream *chunk, char fmt)
         if (!chunk->has_extended_timestamp)
         {
             // Extended timestamp: 0 or 4 bytes
-            // This field MUST be sent when the normal timsestamp is set to
+            // This field MUST be sent when the normal timestamp is set to
             // 0xffffff, it MUST NOT be sent if the normal timestamp is set to
             // anything else. So for values less than 0xffffff the normal
             // timestamp field SHOULD be used in which case the extended timestamp
@@ -911,10 +911,10 @@ srs_error_t SrsProtocol::read_message_header(SrsChunkStream *chunk, char fmt)
             pp[0] = *p++;
             pp[3] = 0;
 
-            // for a message, if msg exists in cache, the size must not changed.
-            // always use the actual msg size to compare, for the cache payload length can changed,
-            // for the fmt type1(stream_id not changed), user can change the payload
-            // length(it's not allowed in the continue chunks).
+            // for a message, if the msg exists in the cache, the size must not change.
+            // always use the actual msg size to compare, for the cached payload length can change,
+            // for fmt type1(stream_id not changed), the user can change the payload
+            // length(it's not allowed in the continuation chunks).
             if (!is_first_chunk_of_msg && chunk->header.payload_length != payload_length)
             {
                 return srs_error_new(ERROR_RTMP_PACKET_SIZE, "msg in chunk cache, size=%d cannot change to %d", chunk->header.payload_length, payload_length);
@@ -935,7 +935,7 @@ srs_error_t SrsProtocol::read_message_header(SrsChunkStream *chunk, char fmt)
     }
     else
     {
-        // update the timestamp even fmt=3 for first chunk packet
+        // update the timestamp even when fmt=3 for the first chunk packet
         if (is_first_chunk_of_msg && !chunk->has_extended_timestamp)
         {
             chunk->header.timestamp += chunk->header.timestamp_delta;
@@ -950,8 +950,8 @@ srs_error_t SrsProtocol::read_message_header(SrsChunkStream *chunk, char fmt)
         {
             return srs_error_wrap(err, "read 4 bytes ext timestamp");
         }
-        // the ptr to the slice maybe invalid when grow()
-        // reset the p to get 4bytes slice.
+        // the ptr to the slice may be invalid when grow()
+        // reset p to get the 4bytes slice.
         char *p = in_buffer->read_slice(4);
 
         uint32_t timestamp = 0x00;
@@ -961,30 +961,30 @@ srs_error_t SrsProtocol::read_message_header(SrsChunkStream *chunk, char fmt)
         pp[1] = *p++;
         pp[0] = *p++;
 
-        // always use 31bits timestamp, for some server may use 32bits extended timestamp.
+        // always use a 31bits timestamp, for some servers may use a 32bits extended timestamp.
         timestamp &= 0x7fffffff;
 
         /**
-         * RTMP specification and ffmpeg/librtmp is false,
-         * but, adobe changed the specification, so flash/FMLE/FMS always true.
+         * In the RTMP specification and ffmpeg/librtmp it is false,
+         * but, adobe changed the specification, so for flash/FMLE/FMS it is always true.
          * default to true to support flash/FMLE/FMS.
          *
-         * ffmpeg/librtmp may donot send this filed, need to detect the value.
+         * ffmpeg/librtmp may not send this field, we need to detect the value.
          * @see also: http://blog.csdn.net/win_lin/article/details/13363699
          * compare to the chunk timestamp, which is set by chunk message header
          * type 0,1 or 2.
          *
-         * @remark, nginx send the extended-timestamp in sequence-header,
-         * and timestamp delta in continue C1 chunks, and so compatible with ffmpeg,
-         * that is, there is no continue chunks and extended-timestamp in nginx-rtmp.
+         * @remark, nginx sends the extended-timestamp in the sequence-header,
+         * and the timestamp delta in continuation C1 chunks, and so it is compatible with ffmpeg,
+         * that is, there are no continuation chunks and extended-timestamp in nginx-rtmp.
          *
-         * @remark, srs always send the extended-timestamp, to keep simple,
+         * @remark, srs always sends the extended-timestamp, to keep it simple,
          * and compatible with adobe products.
          */
         uint32_t chunk_extended_timestamp = (uint32_t)chunk->extended_timestamp;
 
         /**
-         * if chunk_timestamp<=0, the chunk previous packet has no extended-timestamp,
+         * if chunk_timestamp<=0, the chunk's previous packet has no extended-timestamp,
          * always use the extended timestamp.
          */
         /**
@@ -1041,7 +1041,7 @@ srs_error_t SrsProtocol::read_message_header(SrsChunkStream *chunk, char fmt)
     // copy header to msg
     chunk->msg->header = chunk->header;
 
-    // increase the msg count, the chunk stream can accept fmt=1/2/3 message now.
+    // increase the msg count, the chunk stream can accept fmt=1/2/3 messages now.
     chunk->msg_count++;
 
     return err;
@@ -1068,7 +1068,7 @@ srs_error_t SrsProtocol::read_message_payload(SrsChunkStream *chunk, SrsCommonMe
     int payload_size = chunk->header.payload_length - chunk->msg->size;
     payload_size = srs_min(payload_size, in_chunk_size);
 
-    // create msg payload if not initialized
+    // create the msg payload if not initialized
     if (!chunk->msg->payload)
     {
         chunk->msg->create_payload(chunk->header.payload_length);
@@ -1099,7 +1099,7 @@ srs_error_t SrsProtocol::on_recv_message(SrsCommonMessage *msg)
 
     srs_assert(msg != NULL);
 
-    // try to response acknowledgement
+    // try to respond with an acknowledgement
     if ((err = response_acknowledgement_message()) != srs_success)
     {
         return srs_error_wrap(err, "response ack");
@@ -1136,9 +1136,9 @@ srs_error_t SrsProtocol::on_recv_message(SrsCommonMessage *msg)
         if (pkt->ackowledgement_window_size > 0)
         {
             in_ack_size.window = (uint32_t)pkt->ackowledgement_window_size;
-            // @remark, we ignore this message, for user noneed to care.
-            // but it's important for dev, for client/server will block if required
-            // ack msg not arrived.
+            // @remark, we ignore this message, for the user need not care.
+            // but it's important for devs, for the client/server will block if the required
+            // ack msg does not arrive.
         }
         break;
     }
@@ -1147,8 +1147,8 @@ srs_error_t SrsProtocol::on_recv_message(SrsCommonMessage *msg)
         SrsSetChunkSizePacket *pkt = dynamic_cast<SrsSetChunkSizePacket *>(packet);
         srs_assert(pkt != NULL);
 
-        // for some server, the actual chunk size can greater than the max value(65536),
-        // so we just warning the invalid chunk size, and actually use it is ok,
+        // for some servers, the actual chunk size can be greater than the max value(65536),
+        // so we just warn about the invalid chunk size, and actually using it is ok,
         // @see: https://github.com/ossrs/srs/issues/160
         if (pkt->chunk_size < SRS_CONSTS_RTMP_MIN_CHUNK_SIZE || pkt->chunk_size > SRS_CONSTS_RTMP_MAX_CHUNK_SIZE)
         {
@@ -1270,7 +1270,7 @@ srs_error_t SrsProtocol::response_acknowledgement_message()
         return err;
     }
 
-    // ignore when delta bytes not exceed half of window(ack size).
+    // ignore when the delta bytes do not exceed half of the window(ack size).
     uint32_t delta = (uint32_t)(skt->get_recv_bytes() - in_ack_size.nb_recv_bytes);
     if (delta < in_ack_size.window / 2)
     {
@@ -1278,7 +1278,7 @@ srs_error_t SrsProtocol::response_acknowledgement_message()
     }
     in_ack_size.nb_recv_bytes = skt->get_recv_bytes();
 
-    // when the sequence number overflow, reset it.
+    // when the sequence number overflows, reset it.
     uint32_t sequence_number = in_ack_size.sequence_number + delta;
     if (sequence_number > 0xf0000000)
     {
@@ -1289,7 +1289,7 @@ srs_error_t SrsProtocol::response_acknowledgement_message()
     SrsAcknowledgementPacket *pkt = new SrsAcknowledgementPacket();
     pkt->sequence_number = sequence_number;
 
-    // use underlayer api to send, donot flush again.
+    // use the underlying api to send, do not flush again.
     if ((err = do_send_and_free_packet(pkt, 0)) != srs_success)
     {
         return srs_error_wrap(err, "send ack");
@@ -1309,7 +1309,7 @@ srs_error_t SrsProtocol::response_ping_message(int32_t timestamp)
     pkt->event_type = SrcPCUCPingResponse;
     pkt->event_data = timestamp;
 
-    // use underlayer api to send, donot flush again.
+    // use the underlying api to send, do not flush again.
     if ((err = do_send_and_free_packet(pkt, 0)) != srs_success)
     {
         return srs_error_wrap(err, "ping response");
@@ -1702,11 +1702,11 @@ void SrsRequest::strip()
     app = srs_string_remove(app, " \n\r\t");
     stream = srs_string_remove(stream, " \n\r\t");
 
-    // remove end slash of app/stream
+    // remove the end slash of app/stream
     app = srs_string_trim_end(app, "/");
     stream = srs_string_trim_end(stream, "/");
 
-    // remove start slash of app/stream
+    // remove the start slash of app/stream
     app = srs_string_trim_start(app, "/");
     stream = srs_string_trim_start(stream, "/");
 }
@@ -1933,7 +1933,7 @@ srs_error_t SrsRtmpServer::response_connect_app(SrsRequest *req, const char *ser
     {
         data->set("srs_server_ip", SrsAmf0Any::str(server_ip));
     }
-    // for edge to directly get the id of client.
+    // for edge to directly get the id of the client.
     data->set("srs_pid", SrsAmf0Any::number(getpid()));
     data->set("srs_id", SrsAmf0Any::str(_srs_context->get_id().c_str()));
 
@@ -2089,7 +2089,7 @@ srs_error_t SrsRtmpServer::start_play(int stream_id)
     }
 
     // onStatus(NetStream.Data.Start)
-    // We should not response this packet, or there is an empty stream "Stream #0:0: Data: none" in FFmpeg.
+    // We should not respond to this packet, or there is an empty stream "Stream #0:0: Data: none" in FFmpeg.
 
     return err;
 }
@@ -2396,7 +2396,7 @@ srs_error_t SrsConnectAppPacket::decode(SrsBuffer *stream)
         return srs_error_wrap(err, "transaction_id");
     }
 
-    // some client donot send id=1.0, so we only warn user if not match.
+    // some clients do not send id=1.0, so we only warn the user if it does not match.
     if (transaction_id != 1.0)
     {
         srs_warn("invalid transaction_id=%.2f", transaction_id);
@@ -2412,7 +2412,7 @@ srs_error_t SrsConnectAppPacket::decode(SrsBuffer *stream)
         srs_freep(args);
 
         // see: https://github.com/ossrs/srs/issues/186
-        // the args maybe any amf0, for instance, a string. we should drop if not object.
+        // the args may be any amf0, for instance, a string. we should drop it if it is not an object.
         SrsAmf0Any *any = NULL;
         if ((err = SrsAmf0Any::discovery(stream, &any)) != srs_success)
         {
@@ -2526,7 +2526,7 @@ srs_error_t SrsConnectAppResPacket::decode(SrsBuffer *stream)
         return srs_error_wrap(err, "transaction_id");
     }
 
-    // some client donot send id=1.0, so we only warn user if not match.
+    // some clients do not send id=1.0, so we only warn the user if it does not match.
     if (transaction_id != 1.0)
     {
         srs_warn("invalid transaction_id=%.2f", transaction_id);
@@ -2542,7 +2542,7 @@ srs_error_t SrsConnectAppResPacket::decode(SrsBuffer *stream)
             return srs_error_wrap(err, "args");
         }
 
-        // ignore when props is not amf0 object.
+        // ignore when props is not an amf0 object.
         if (!p->is_object())
         {
             srs_warn("ignore connect response props marker=%#x.", (uint8_t)p->marker);
@@ -3407,7 +3407,7 @@ srs_error_t SrsOnMetaDataPacket::decode(SrsBuffer *stream)
         return err;
     }
 
-    // the metadata maybe object or ecma array
+    // the metadata may be an object or ecma array
     SrsAmf0Any *any = NULL;
     if ((err = srs_amf0_read_any(stream, &any)) != srs_success)
     {
@@ -3426,7 +3426,7 @@ srs_error_t SrsOnMetaDataPacket::decode(SrsBuffer *stream)
     {
         SrsAmf0EcmaArray *arr = any->to_ecma_array();
 
-        // if ecma array, copy to object.
+        // if it is an ecma array, copy to an object.
         for (int i = 0; i < arr->count(); i++)
         {
             metadata->set(arr->key_at(i), arr->value_at(i)->copy());

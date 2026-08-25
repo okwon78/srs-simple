@@ -88,7 +88,7 @@ srs_error_t SrsConsoleLog::initialize()
 }
 
 // Generate the log header.
-// @param dangerous Whether log is warning or error, log the errno if true.
+// @param dangerous Whether the log is a warning or error, log the errno if true.
 bool srs_log_header(char* buffer, int size, bool utc, bool dangerous, const char* tag, SrsContextId cid, const char* level, int* psize)
 {
     // clock time

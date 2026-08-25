@@ -70,7 +70,7 @@ public:
     virtual ~SrsFlvVideo();
 public:
     static bool keyframe(char* data, int size);
-    // Whether the video is sequence header (AVC packet type = 0, keyframe).
+    // Whether the video is a sequence header (AVC packet type = 0, keyframe).
     static bool sh(char* data, int size);
     // Whether the video is H.264.
     static bool h264(char* data, int size);
@@ -83,7 +83,7 @@ public:
     SrsFlvAudio();
     virtual ~SrsFlvAudio();
 public:
-    // Whether the audio is sequence header (AAC packet type = 0).
+    // Whether the audio is a sequence header (AAC packet type = 0).
     static bool sh(char* data, int size);
     // Whether the audio is AAC.
     static bool aac(char* data, int size);
@@ -108,7 +108,7 @@ enum SrsAvcNaluType
     SrsAvcNaluTypeAccessUnitDelimiter = 9,
 };
 
-// The aac object type, for RTMP sequence header (AudioSpecificConfig audioObjectType).
+// The aac object type, for the RTMP sequence header (AudioSpecificConfig audioObjectType).
 // @doc ISO_IEC_14496-3-AAC-2001.pdf, page 23, 1.5.1.1 Audio object type definition
 enum SrsAacObjectType
 {
@@ -133,21 +133,21 @@ enum SrsAacProfile
     SrsAacProfileReserved = 3,
 };
 
-// Convert aac object type in RTMP sequence header to aac profile of ADTS.
+// Convert the aac object type in the RTMP sequence header to the aac profile of ADTS.
 extern SrsAacProfile srs_aac_rtmp2ts(SrsAacObjectType object_type);
 
 // The audio sample rate table of AudioSpecificConfig samplingFrequencyIndex.
 // @doc ISO_IEC_14496-3-AAC-2001.pdf, page 33, Table 1.6.2
 extern int srs_aac_srates[];
 
-// The sample in frame: a NALU for video, or an AAC raw frame for audio.
+// The sample in a frame: a NALU for video, or an AAC raw frame for audio.
 // bytes는 메시지 페이로드 내부를 가리키는 뷰일 뿐, 소유하지 않는다.
 class SrsSample
 {
 public:
-    // The size of unit.
+    // The size of the unit.
     int size;
-    // The ptr of unit, user must free it.
+    // The ptr of the unit, the user must free it.
     char* bytes;
 public:
     SrsSample();
@@ -215,7 +215,7 @@ public:
     // The composition time offset in ms (video만, B-frame 재정렬용. PTS = DTS + CTS).
     int32_t cts;
 public:
-    // The samples in frame.
+    // The samples in the frame.
     SrsSample samples[SrsMaxNbSamples];
     // The number of samples.
     int nb_samples;
@@ -223,7 +223,7 @@ public:
     SrsFrame();
     virtual ~SrsFrame();
 public:
-    // Add a sample to frame.
+    // Add a sample to the frame.
     virtual srs_error_t add_sample(char* bytes, int size);
 };
 
@@ -251,7 +251,7 @@ public:
     SrsVideoAvcFrameType frame_type;
     // The avc packet type (sequence header/NALU).
     SrsVideoAvcFrameTrait avc_packet_type;
-    // Whether frame contains IDR NALU (nal_unit_type 5).
+    // Whether the frame contains an IDR NALU (nal_unit_type 5).
     bool has_idr;
 public:
     // The codec config of this frame, owned by SrsFormat.
@@ -270,7 +270,7 @@ public:
 class SrsFormat
 {
 public:
-    // The parsed frame of last on_audio/on_video. NULL until first frame.
+    // The parsed frame of the last on_audio/on_video. NULL until the first frame.
     SrsAudioFrame* audio;
     SrsVideoFrame* video;
     // The parsed codec config. NULL until first frame; config는 시퀀스 헤더에서 채워진다.
@@ -287,19 +287,19 @@ public:
     virtual ~SrsFormat();
 public:
     virtual srs_error_t initialize();
-    // When got audio/video FLV tag payload.
+    // When we get an audio/video FLV tag payload.
     virtual srs_error_t on_audio(int64_t timestamp, char* data, int size);
     virtual srs_error_t on_video(int64_t timestamp, char* data, int size);
 private:
     virtual srs_error_t audio_aac_demux(SrsBuffer* buffer, int64_t timestamp);
     virtual srs_error_t audio_aac_sequence_header_demux(char* data, int size);
     virtual srs_error_t video_avc_demux(SrsBuffer* buffer, int64_t timestamp);
-    // Parse the H.264 SPS/PPS from sequence header (avcC).
+    // Parse the H.264 SPS/PPS from the sequence header (avcC).
     virtual srs_error_t avc_demux_sps_pps(SrsBuffer* stream);
     // Parse the width/height from SPS bitstream (S16 — 원본 :2237. 해상도만, VUI/fps 제거).
     virtual srs_error_t avc_demux_sps();
     virtual srs_error_t avc_demux_sps_rbsp(char* rbsp, int nb_rbsp);
-    // Parse the NALU samples from AVCC (length-prefixed) payload.
+    // Parse the NALU samples from the AVCC (length-prefixed) payload.
     virtual srs_error_t avc_demux_ibmf_format(SrsBuffer* stream);
 };
 

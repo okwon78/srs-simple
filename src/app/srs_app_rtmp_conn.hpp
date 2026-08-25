@@ -24,15 +24,15 @@ class SrsStSocket;
 class SrsLiveSource;
 class SrsLiveConsumer;
 
-// Some information of client.
+// Some information about the client.
 class SrsClientInfo
 {
 public:
-    // The type of client, play or publish.
+    // The type of the client, play or publish.
     SrsRtmpConnType type;
-    // Original request object from client.
+    // Original request object from the client.
     SrsRequest* req;
-    // Response object to client.
+    // Response object to the client.
     SrsResponse* res;
 public:
     SrsClientInfo();
@@ -50,12 +50,12 @@ private:
 private:
     srs_netfd_t stfd;
     SrsStSocket* skt;
-    // Each connection start a green thread,
-    // when thread stop, the connection will be delete by server.
+    // Each connection starts a green thread,
+    // when the thread stops, the connection will be deleted by the server.
     SrsCoroutine* trd;
     // The manager object to manage the connection.
     ISrsResourceManager* manager;
-    // The ip and port of client.
+    // The ip and port of the client.
     std::string ip;
     int port;
 public:
@@ -69,7 +69,7 @@ protected:
 private:
     // When valid and connected to vhost/app, service the client.
     virtual srs_error_t service_cycle();
-    // The stream(play/publish) service cycle, identify client first.
+    // The stream(play/publish) service cycle, identify the client first.
     virtual srs_error_t stream_service_cycle();
     virtual srs_error_t playing(SrsLiveSource* source);
     virtual srs_error_t do_playing(SrsLiveSource* source, SrsLiveConsumer* consumer);
@@ -83,15 +83,15 @@ private:
 // Interface ISrsStartable
 public:
     // Start the client green thread.
-    // when server get a client from listener,
-    // 1. server will create an concrete connection(for instance, RTMP connection),
-    // 2. then add connection to its connection manager,
-    // 3. start the client thread by invoke this start()
+    // when the server gets a client from the listener,
+    // 1. the server will create a concrete connection(for instance, an RTMP connection),
+    // 2. then add the connection to its connection manager,
+    // 3. start the client thread by invoking this start()
     virtual srs_error_t start();
 // Interface ISrsCoroutineHandler
 public:
     // The thread cycle function,
-    // when serve connection completed, terminate the loop which will terminate the thread.
+    // when serving the connection is completed, terminate the loop which will terminate the thread.
     virtual srs_error_t cycle();
 // Interface ISrsConnection.
 public:

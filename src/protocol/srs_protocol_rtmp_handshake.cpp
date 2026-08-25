@@ -102,7 +102,7 @@ srs_error_t SrsHandshakeBytes::create_s0s1s2(const char *c1)
         stream.write_bytes(c0c1 + 1, 4);
     }
 
-    // if c1 specified, copy c1 to s2.
+    // if c1 is specified, copy c1 to s2.
     // @see: https://github.com/ossrs/srs/issues/46
     if (c1)
     {

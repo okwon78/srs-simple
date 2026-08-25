@@ -13,7 +13,7 @@
 
 #include <srs_kernel_io.hpp>
 
-// file writer, to write to file.
+// The file writer, to write to a file.
 // 원본은 ISrsWriteSeeker(kernel_io) 구현 — seek 계열을 제거해 ISrsWriter만 구현한다.
 class SrsFileWriter : public ISrsWriter
 {
@@ -24,11 +24,11 @@ public:
     SrsFileWriter();
     virtual ~SrsFileWriter();
 public:
-    // open file writer, in truncate mode.
-    // @param p a string indicates the path of file to open.
+    // open the file writer, in truncate mode.
+    // @param p a string that indicates the path of the file to open.
     virtual srs_error_t open(std::string p);
-    // close current writer.
-    // @remark user can reopen again.
+    // close the current writer.
+    // @remark the user can reopen it again.
     virtual void close();
 public:
     virtual bool is_open();
@@ -39,7 +39,7 @@ public:
     virtual srs_error_t writev(const iovec* iov, int iovcnt, ssize_t* pnwrite);
 };
 
-// file reader, to read from file.
+// The file reader, to read from a file.
 class SrsFileReader
 {
 private:
@@ -49,11 +49,11 @@ public:
     SrsFileReader();
     virtual ~SrsFileReader();
 public:
-    // open file reader.
-    // @param p a string indicates the path of file to open.
+    // open the file reader.
+    // @param p a string that indicates the path of the file to open.
     virtual srs_error_t open(std::string p);
-    // close current reader.
-    // @remark user can reopen again.
+    // close the current reader.
+    // @remark the user can reopen it again.
     virtual void close();
 public:
     virtual bool is_open();

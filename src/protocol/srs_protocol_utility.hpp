@@ -15,7 +15,7 @@
 // @param schema, for example, rtmp
 // @param host, for example, 192.168.1.10
 // @param vhost, for example, vhost.ossrs.net.
-//       vhost default to host, when user not set vhost in query of app.
+//       vhost defaults to host, when the user does not set vhost in the query of app.
 // @param app, for example, live
 // @param stream, for example, livestream. 입력값이 있으면 URL에 합쳐서 재파싱한다
 //       (stream에 붙은 ?k=v 파라미터를 param으로 분리하는 용도).
@@ -28,7 +28,7 @@ extern void srs_discovery_tc_url(std::string tcUrl, std::string& schema, std::st
 // SrsLiveSourceManager(S8)의 소스 맵 키가 된다.
 extern std::string srs_generate_stream_url(std::string vhost, std::string app, std::string stream);
 
-// Build the path from template, replace [vhost],[app],[stream].
+// Build the path from the template, replace [vhost],[app],[stream].
 // S10 HLS의 m3u8/ts 파일명 템플릿 치환. (원본: kernel/srs_kernel_utility.cpp)
 extern std::string srs_path_build_stream(std::string template_path, std::string vhost, std::string app, std::string stream);
 
@@ -40,13 +40,13 @@ extern int srs_get_peer_port(int fd);
 extern std::string srs_get_local_ip(int fd);
 
 // String helpers (원본: kernel/srs_kernel_utility.hpp)
-// replace old_str to new_str of str
+// replace old_str with new_str in str
 extern std::string srs_string_replace(std::string str, std::string old_str, std::string new_str);
-// trim char in trim_chars of str
+// trim the chars in trim_chars from the end of str
 extern std::string srs_string_trim_end(std::string str, std::string trim_chars);
-// trim char in trim_chars of str
+// trim the chars in trim_chars from the start of str
 extern std::string srs_string_trim_start(std::string str, std::string trim_chars);
-// remove char in remove_chars of str
+// remove the chars in remove_chars from str
 extern std::string srs_string_remove(std::string str, std::string remove_chars);
 
 #endif

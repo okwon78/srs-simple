@@ -23,37 +23,37 @@ public:
     ISrsResource();
     virtual ~ISrsResource();
 public:
-    // Get the context id of connection.
+    // Get the context id of the connection.
     virtual const SrsContextId& get_id() = 0;
 public:
     // The resource description, optional.
     virtual std::string desc();
 };
 
-// The manager for resource.
+// The manager for resources.
 class ISrsResourceManager
 {
 public:
     ISrsResourceManager();
     virtual ~ISrsResourceManager();
 public:
-    // Remove then free the specified connection. Note that the manager always free c resource,
+    // Remove then free the specified connection. Note that the manager always frees the resource c,
     // in the same coroutine or another coroutine.
     virtual void remove(ISrsResource* c) = 0;
 };
 
-// The connection interface for all HTTP/RTMP/RTSP object.
+// The connection interface for all HTTP/RTMP/RTSP objects.
 class ISrsConnection : public ISrsResource
 {
 public:
     ISrsConnection();
     virtual ~ISrsConnection();
 public:
-    // Get remote ip address.
+    // Get the remote ip address.
     virtual std::string remote_ip() = 0;
 };
 
-// The resource manager remove resource and delete it asynchronously.
+// The resource manager removes a resource and deletes it asynchronously.
 // 원본은 ST cond로 좀비를 넘기지만, pthread에서는 mutex + condition_variable을 쓴다.
 // interrupt는 블록된 cond wait를 모르는 SrsSTCoroutine::stop()에서 오므로,
 // 리스너의 poll(100ms)과 같은 이디엄으로 타임아웃 부 대기를 한다 (CLAUDE.md §5.1).
@@ -69,7 +69,7 @@ private:
     bool disposing_;
     // The connections owned by this manager.
     std::vector<ISrsResource*> conns_;
-    // The zombie connections, we will delete it asynchronously.
+    // The zombie connections, we will delete them asynchronously.
     std::vector<ISrsResource*> zombies_;
 public:
     SrsResourceManager(const std::string& label);
@@ -85,7 +85,7 @@ public:
     void add(ISrsResource* conn);
 // Interface ISrsResourceManager
 public:
-    // A callback for connection to remove itself, at the end of its cycle().
+    // A callback for a connection to remove itself, at the end of its cycle().
     // 자기 스레드에서 delete this 금지 — 여기 등록만 하고, 매니저 스레드가 해제한다.
     virtual void remove(ISrsResource* c);
 private:

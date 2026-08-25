@@ -114,7 +114,7 @@ VOID TEST(KernelBufferTest, PosLeftEmptyRequire)
     EXPECT_TRUE(b.empty());
     EXPECT_EQ(0, b.left());
 
-    // to skip(-pos()) to reset buffer.
+    // skip(-pos()) to reset the buffer.
     b.skip(-1 * b.pos());
     EXPECT_EQ(0, b.pos());
     EXPECT_EQ(8, b.left());

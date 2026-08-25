@@ -73,7 +73,7 @@ public:
     SrsMp4SampleManager();
     virtual ~SrsMp4SampleManager();
 public:
-    // Append the sample to the tail of manager.
+    // Append the sample to the tail of the manager.
     virtual void append(SrsMp4Sample* sample);
 };
 
@@ -139,7 +139,7 @@ public:
     // @param ft, The frame type. For video, it's SrsVideoAvcFrameType.
     // @param dts/pts in milliseconds (tbn=1000).
     // @remark All samples are RAW AAC/AVC data(길이 프리픽스 포함 AVCC),
-    //         because sequence header is writen to init.mp4.
+    //         because the sequence header is written to init.mp4.
     virtual srs_error_t write_sample(SrsMp4HandlerType ht, uint16_t ft,
         uint32_t dts, uint32_t pts, uint8_t* sample, uint32_t nb_sample);
     // Flush the encoder, to write the moof and mdat.

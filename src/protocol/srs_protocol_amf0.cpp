@@ -196,7 +196,7 @@ srs_error_t SrsAmf0Any::discovery(SrsBuffer* stream, SrsAmf0Any** ppvalue)
 
     char marker = stream->read_1bytes();
 
-    // backward the 1byte marker.
+    // move back over the 1 byte marker.
     stream->skip(-1);
 
     switch (marker) {
@@ -489,7 +489,7 @@ srs_error_t SrsAmf0Object::read(SrsBuffer* stream)
 
     // value
     while (!stream->empty()) {
-        // detect whether is eof.
+        // detect whether it is eof.
         if (srs_amf0_is_object_eof(stream)) {
             SrsAmf0ObjectEOF pbj_eof;
             if ((err = pbj_eof.read(stream)) != srs_success) {
@@ -662,7 +662,7 @@ srs_error_t SrsAmf0EcmaArray::read(SrsBuffer* stream)
     this->_count = count;
 
     while (!stream->empty()) {
-        // detect whether is eof.
+        // detect whether it is eof.
         if (srs_amf0_is_object_eof(stream)) {
             SrsAmf0ObjectEOF pbj_eof;
             if ((err = pbj_eof.read(stream)) != srs_success) {

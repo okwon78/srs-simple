@@ -47,7 +47,7 @@ enum SrsTsStream
     SrsTsStreamVideoH264 = 0x1b,
 };
 
-// The stream_id of PES packet.
+// The stream_id of the PES packet.
 // @doc ISO_IEC_13818-1-2000.pdf, page 53, Table 2-18
 enum SrsTsPESStreamId
 {
@@ -110,7 +110,7 @@ public:
     // Reset the context, then the next encode will write PAT/PMT first.
     virtual void reset();
 public:
-    // Encode the ts message to writer, in 188 bytes ts packets.
+    // Encode the ts message to the writer, in 188 bytes ts packets.
     // @param vc/ac 현재 스트림의 코덱 — PAT/PMT의 ES 구성과 PCR PID를 결정한다.
     virtual srs_error_t encode(ISrsWriter* writer, SrsTsMessage* msg, SrsVideoCodecId vc, SrsAudioCodecId ac);
 private:
@@ -135,7 +135,7 @@ public:
     SrsTsContextWriter(SrsFileWriter* w, SrsTsContext* c, SrsAudioCodecId ac, SrsVideoCodecId vc);
     virtual ~SrsTsContextWriter();
 public:
-    // Write an audio/video frame to ts file.
+    // Write an audio/video frame to the ts file.
     virtual srs_error_t write_audio(SrsTsMessage* audio);
     virtual srs_error_t write_video(SrsTsMessage* video);
 public:
@@ -145,7 +145,7 @@ public:
     virtual void set_acodec(SrsAudioCodecId v);
 };
 
-// The queue of ts message to build PES payload:
+// The queue of ts messages to build the PES payload:
 // FLV/RTMP 프레임을 받아 PES 페이로드(ADTS/annex-b)로 변환해 SrsTsMessage에 쌓는다.
 // flush(원본은 SrsHlsMuxer::flush_audio/flush_video)가 꺼내 쓰고 비운다.
 class SrsTsMessageCache
@@ -157,9 +157,9 @@ public:
     SrsTsMessageCache();
     virtual ~SrsTsMessageCache();
 public:
-    // Write audio frame to cache. @param dts in 90kHz.
+    // Write an audio frame to the cache. @param dts in 90kHz.
     virtual srs_error_t cache_audio(SrsAudioFrame* frame, int64_t dts);
-    // Write video frame to cache. @param dts in 90kHz.
+    // Write a video frame to the cache. @param dts in 90kHz.
     virtual srs_error_t cache_video(SrsVideoFrame* frame, int64_t dts);
 private:
     // AAC raw → ADTS 프레임 (7바이트 ADTS 헤더 생성).
