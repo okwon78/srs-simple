@@ -200,7 +200,7 @@ TEST(AppLlHlsTest, MuxerPartAndSegmentCut)
     EXPECT_EQ(2000 * SRS_UTIME_MILLISECONDS, s0->duration);
     srs_utime_t sum = 0;
     for (int i = 0; i < (int)s0->parts.size(); i++) {
-        SrsLlHlsPart* p = s0->parts[i];
+        SrsLlHlsPart* p = s0->parts[i].get();
         EXPECT_EQ(i, p->psn);
         sum += p->duration;
         // 마지막이 아닌 파트: 85%×target ≤ duration ≤ target (스펙 요구를 컷 정책이 보장).
@@ -294,7 +294,7 @@ TEST(AppLlHlsTest, MuxerMuxedAvAndInit)
     srs_utime_t sum = 0;
     int independents = 0;
     for (int i = 0; i < (int)s0->parts.size(); i++) {
-        SrsLlHlsPart* p = s0->parts[i];
+        SrsLlHlsPart* p = s0->parts[i].get();
         sum += p->duration;
         if (p->independent) independents++;
         // 모든 파트 ≤ PART-TARGET (오디오 프레임이 컷을 당겨도 상한은 지켜진다).

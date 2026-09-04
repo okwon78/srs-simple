@@ -33,6 +33,7 @@
 
 #include <condition_variable>
 #include <deque>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -67,6 +68,10 @@ public:
 
 // 파트 1개 = CMAF 청크(styp+moof+mdat) 1개. m3u8의 EXT-X-PART 한 줄이 된다.
 // (OME FMP4Partial 대응)
+// 수명은 shared_ptr로 공유한다 (S18): HTTP 스레드가 storage lock 안에서 페이로드를
+// 복사하지 않고 포인터만 받아 나가, 락 밖에서 소켓에 쓴다 — 윈도우에서 밀려나
+// 삭제돼도 응답 중인 스레드는 자기 참조로 안전하다 (SrsSharedPtrMessage의
+// refcount 팬아웃과 같은 취지 — CLAUDE.md §5.2).
 class SrsLlHlsPart
 {
 public:
@@ -82,6 +87,7 @@ public:
     SrsLlHlsPart();
     virtual ~SrsLlHlsPart();
 };
+typedef std::shared_ptr<SrsLlHlsPart> SrsLlHlsPartPtr;
 
 // 세그먼트 1개 = 파트들의 부모. 완결되면 m3u8의 EXTINF 한 줄이 된다.
 // 세그먼트 전체 바이트는 따로 들지 않는다 — 파트들의 연결이 곧 세그먼트다.
@@ -95,8 +101,8 @@ public:
     srs_utime_t duration;
     // Whether segment is completed (마지막 파트까지 게시됨).
     bool completed;
-    // The parts of this segment.
-    std::deque<SrsLlHlsPart*> parts;
+    // The parts of this segment (shared — SrsLlHlsPart 주석).
+    std::deque<SrsLlHlsPartPtr> parts;
 public:
     SrsLlHlsSegment(int64_t seq);
     virtual ~SrsLlHlsSegment();
@@ -168,12 +174,18 @@ public:
     // 캐시된 m3u8 (S14). 세그먼트가 하나도 없으면 false.
     virtual bool get_playlist(std::string& v);
     // Append one part. 열린 세그먼트가 없으면 새 msn으로 연다.
+    // @param payload 파트 바이트 — rvalue면 복사 없이 넘겨받는다(muxer의 hot path, S18).
     // @param close_segment 이 파트가 부모 세그먼트의 마지막 파트 — 세그먼트 완결.
+    virtual void append_part(std::string&& payload, srs_utime_t duration, bool independent, bool close_segment);
     virtual void append_part(const std::string& payload, srs_utime_t duration, bool independent, bool close_segment);
 public:
-    // 조회. 없으면(만료 포함) false.
+    // 조회. 없으면(만료 포함) false. 포인터 반환판이 HTTP 서빙용(락 안 무복사 — S18),
+    // string 반환판은 편의용(복사).
+    virtual bool get_part(int64_t msn, int psn, SrsLlHlsPartPtr& part);
     virtual bool get_part(int64_t msn, int psn, std::string& payload);
-    // 완결된 세그먼트의 전체 바이트(파트 연결). 미완결/없음이면 false.
+    // 완결된 세그먼트 = 파트들의 연결. 미완결/없음이면 false.
+    // 포인터 목록판은 호출자가 writev로 이어 쓴다 (세그먼트 바이트를 따로 만들지 않는다).
+    virtual bool get_segment(int64_t msn, std::vector<SrsLlHlsPartPtr>& parts);
     virtual bool get_segment(int64_t msn, std::string& payload);
     // The oldest/latest msn in the window, -1 if empty.
     virtual int64_t first_msn();
@@ -190,6 +202,7 @@ public:
 private:
     // 호출자가 lock_을 잡은 상태여야 한다.
     virtual bool reached(int64_t msn, int psn);
+    // msn은 윈도우 안에서 연속(next_msn_++ 후 앞에서만 pop)이라 front 기준 O(1) 인덱싱.
     virtual SrsLlHlsSegment* find(int64_t msn);
     virtual void shrink();
     virtual void refresh_playlist();

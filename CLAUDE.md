@@ -209,7 +209,7 @@ S→C onMetaData → AVC/AAC 시퀀스 헤더 → GOP 캐시 → 라이브 메�
 | `src/kernel/srs_kernel_io.hpp` | `kernel/srs_kernel_io.hpp` | S10에서 원본 위치로 복원 (그전엔 protocol_io에 병합) | 38 |
 | `src/kernel/srs_kernel_file.{hpp,cpp}` | `kernel/srs_kernel_file.*` + `srs_kernel_utility.cpp`의 path 헬퍼 | Writer/Reader 최소만 (S10) | 265 |
 | `src/kernel/srs_kernel_ts.{hpp,cpp}` | `kernel/srs_kernel_ts.*` (5,900줄) | 인코더만. 패킷 클래스 트리 제거 (S10, §5.6) | 766 |
-| `src/kernel/srs_kernel_mp4.{hpp,cpp}` | `kernel/srs_kernel_mp4.*` (9,000줄, DASH 경로) | fMP4 인코더 2종만. 박스 클래스 트리 제거, muxed 확장 (S12, §5.6) | 891 |
+| `src/kernel/srs_kernel_mp4.{hpp,cpp}` | `kernel/srs_kernel_mp4.*` (9,000줄, DASH 경로) | fMP4 인코더 2종만. 박스 클래스 트리 제거, muxed 확장 (S12, §5.6). S18: 트랙별 연속 버퍼 | 878 |
 | `src/protocol/srs_protocol_io.hpp` | `protocol/srs_protocol_io.hpp` | 프로토콜 IO 인터페이스 (kernel_io 포함) | 76 |
 | `src/protocol/srs_protocol_stream.{hpp,cpp}` | `protocol/srs_protocol_stream.*` | `SrsFastStream::grow/read_slice`. merged-read 제거 | 184 |
 | `src/protocol/srs_protocol_amf0.{hpp,cpp}` | `protocol/srs_protocol_amf0.*` (1,779줄) | 7타입 서브셋 | 1,716 |
@@ -225,8 +225,8 @@ S→C onMetaData → AVC/AAC 시퀀스 헤더 → GOP 캐시 → 라이브 메�
 | `src/app/srs_app_source.{hpp,cpp}` | `app/srs_app_source.*` (2,812줄) | Source/Consumer/GopCache/MetaCache/Jitter/Queue + `SrsOriginHub`(S10, HLS만) | 1,658 |
 | `src/app/srs_app_fragment.{hpp,cpp}` | `app/srs_app_fragment.*` | 세그먼트 수명주기 + 롤링 윈도우 (S10) | 314 |
 | `src/app/srs_app_hls.{hpp,cpp}` | `app/srs_app_hls.*` (1,900줄) | 암호화/ts_floor/훅 제거 (S10, §5.6) | 963 |
-| `src/app/srs_app_llhls.{hpp,cpp}` | (원본에 없음 — OME `fmp4_packager`/`fmp4_storage`/`llhls_chunklist` 구조 차용) | LL-HLS 파트 컷·인메모리 윈도우·플레이리스트 (S13/S14, §5.6) | 1,185 |
-| `src/app/srs_app_http_conn.{hpp,cpp}` | `app/srs_app_http_conn.*` (+ OME `llhls_session`의 블로킹 조건) | S11에서 삭제한 것을 S15에서 LL-HLS 전용으로 부활 — keep-alive + 블로킹 서빙 (§5.6 S15) | 564 |
+| `src/app/srs_app_llhls.{hpp,cpp}` | (원본에 없음 — OME `fmp4_packager`/`fmp4_storage`/`llhls_chunklist` 구조 차용) | LL-HLS 파트 컷·인메모리 윈도우·플레이리스트 (S13/S14, §5.6). S18: shared_ptr 파트·무복사 게시 | 1,236 |
+| `src/app/srs_app_http_conn.{hpp,cpp}` | `app/srs_app_http_conn.*` (+ OME `llhls_session`의 블로킹 조건) | S11에서 삭제한 것을 S15에서 LL-HLS 전용으로 부활 — keep-alive + 블로킹 서빙 (§5.6 S15). S18: writev 응답·TCP_NODELAY | 639 |
 | `conf/nginx.conf` | (원본 `srs_app_http_conn.*`/`srs_app_http_static.*`의 역할 대체) | TS-HLS 파일/플레이어 페이지 서빙 — S10의 정적 파일 `SrsHttpConn`을 S11에서 외부 nginx로 교체 (§5.6 S11). LL-HLS(:8081)는 nginx를 거치지 않는다 | — |
 | `src/app/srs_app_config.{hpp,cpp}` | `app/srs_app_config.*` (10,138줄) | 상수 구조체 (S10: hls_*, S13: llhls_* 추가) | 77 |
 | `src/main/srs_main_server.cpp` | `main/srs_main_server.cpp` | main() | 63 |
@@ -596,6 +596,16 @@ LL-HLS(S12~S16)의 설계 근거·참조 조사·세션별 확정 기록의 원�
 - **`publish.sh`는 재인코딩**(`-c:v libx264 -g 60 -keyint_min 60 -bf 0 -c:a aac`): `-c copy`는 `test.mp4`의 원본 GOP(8.3초)를 그대로 쓰는데, LL-HLS는 키프레임에서만 세그먼트를 자르므로 `llhls_segment`(2초)를 지키지 못한다 (실측: `EXT-X-TARGETDURATION:9`, 8.3초 세그먼트). TS-HLS만 볼 때는 `-c copy`도 무방
 - `www/llhls.html` 기본 URL은 `localhost` → **`127.0.0.1`**: 내장 HTTP는 IPv4 전용(§5.6 S2)이라 `localhost`가 `::1`로 먼저 해석되면 실패한다
 
+#### LL-HLS 성능 개선 (S18) — 2026-09-04
+
+프로토콜 동작·플레이리스트·바이트 레이아웃은 그대로 두고 **복사·할당·시스템콜 횟수만** 줄였다. 서버 로그와 utest 130개는 변경 전과 동일하게 동작한다.
+
+- **hub 스레드(source lock 안)의 파트 복사 3회 → 1회**: 이전에는 `SrsMp4M2tsSegmentEncoder::write_sample`이 샘플마다 `new[]`+memcpy(초당 ~150회 힙 할당), `flush`가 샘플 단위로 writer에 append, `append_part`가 `part->payload = payload`로 다시 복사했다. 지금은 인코더가 **트랙별 연속 버퍼**(`video_data_`/`audio_data_` — mdat은 [video][audio] 순서라 트랙별로만 연속이면 trun의 data_offset 하나로 충분)에 memcpy 1회, flush는 moof+mdat 헤더+두 버퍼를 **writev 1회**, storage는 `append_part(std::string&&)`로 **이동**받는다. 원본 `SrsMp4Sample`은 바이트를 소유하지만 여기서는 **메타데이터만**(type/dts/pts/frame_type/nb_data) 값으로 보관하고 `SrsMp4SampleManager`도 `vector<SrsMp4Sample>` 값 저장 — 클래스 이름은 유지
+- **HTTP 스레드는 storage lock 안에서 바이트를 복사하지 않는다**: `SrsLlHlsPart`를 `std::shared_ptr`(`SrsLlHlsPartPtr`)로 공유해 `get_part`는 포인터만 넘기고, 소켓 쓰기는 락 밖에서 한다. 응답 도중 윈도우에서 밀려나 삭제돼도 응답 스레드의 참조가 바이트를 붙든다 — `SrsSharedPtrMessage` refcount 팬아웃(§5.2)과 같은 취지. 완결 세그먼트도 파트 포인터 목록만 받아 **파트별 iov로 writev** — 세그먼트 크기(수백 KB)의 임시 문자열을 만들지 않는다. 이전에는 플레이어 수만큼의 100KB~500KB 복사가 storage lock을 잡고 hub 스레드(= RTMP 팬아웃)를 막았다. string 반환 오버로드(`get_part/get_segment(…, std::string&)`, `append_part(const std::string&)`)는 편의·utest용으로 남겼다
+- **응답은 헤더+본문 writev 1회 + `TCP_NODELAY`**: 이전에는 헤더와 본문을 `send` 2회로 보냈다. 헤더가 먼저 나가 미확인 상태가 되면 Nagle이 MSS 미만인 본문(m3u8 ~1KB, 파트 꼬리)을 클라이언트 delayed-ACK(수십 ms)까지 붙든다 — 0.5초마다 오는 블로킹 리로드 응답에 그대로 더해지는 지연이었다. RTMP 소켓은 원본 기본값대로 NODELAY off (여기만 예외)
+- `SrsLlHlsStorage::find`는 선형 탐색 대신 O(1) 인덱싱 — 윈도우 안 msn은 연속(`next_msn_++` 후 앞에서만 pop)이라 `msn - front->msn`이 곧 deque 인덱스. `SrsLlHlsBufferWriter::writev`는 총량을 먼저 reserve
+- 하지 않은 것: `refresh_playlist`의 stringstream 재생성(초당 2회, 수십 µs — 게시 순서 보장을 위해 락 안에 남긴다), 요청마다의 `srs_trace`(블로킹 리로드 관찰이 교육 포인트), init/m3u8의 복사(수 KB)
+
 ---
 
 ## 6. 빌드
@@ -665,7 +675,7 @@ srs_simple의 각 지점을 이해했다면, 원본에서 아래를 열면 같�
 
 ## 8. 구현 이력과 검증 상태
 
-구현은 S1~S9 세션(RTMP, 2026-08-08 ~ 2026-08-09), S10 세션(HLS, 2026-08-21), S11 세션(HTTP 서빙을 외부 nginx로 이관, 2026-08-22), S12~S16 세션(LL-HLS, 2026-08-22 — 계획·설계 기록은 [PLANS.md](PLANS.md)/[TASKS.md](TASKS.md))으로 진행해 **전부 완료**되었다. S17(2026-08-23)은 서버 코드 변경 없이 데모 자산만 손봤다(§5.6 S17). 세션 순서가 곧 **코드 읽는 순서**이며 의존 순서다:
+구현은 S1~S9 세션(RTMP, 2026-08-08 ~ 2026-08-09), S10 세션(HLS, 2026-08-21), S11 세션(HTTP 서빙을 외부 nginx로 이관, 2026-08-22), S12~S16 세션(LL-HLS, 2026-08-22 — 계획·설계 기록은 [PLANS.md](PLANS.md)/[TASKS.md](TASKS.md))으로 진행해 **전부 완료**되었다. S17(2026-08-23)은 서버 코드 변경 없이 데모 자산만 손봤고(§5.6 S17), S18(2026-09-04)은 LL-HLS 경로의 복사·할당·시스템콜만 줄였다(§5.6 S18). 세션 순서가 곧 **코드 읽는 순서**이며 의존 순서다:
 
 ```text
 S1 core/kernel 기반 → S2 I/O·스레드 → S3 핸드셰이크·메시지 모델 → S4 AMF0
@@ -675,6 +685,7 @@ S1 core/kernel 기반 → S2 I/O·스레드 → S3 핸드셰이크·메시지 �
   → S12 fMP4 커널 먹서 → S13 LL-HLS 파트 컷·인메모리 → S14 플레이리스트
   → S15 SrsHttpConn 부활·블로킹 서빙 → S16 통합 검증·문서 (2026-08-22, §5.6 S12~S16)
   → S17 데모 자산 정리: 플레이어 페이지 개명·라이브 전용 정책·publish 스크립트 (2026-08-23, §5.6 S17)
+  → S18 LL-HLS 성능: 파트 무복사 게시·shared_ptr 서빙·writev 응답 (2026-09-04, §5.6 S18)
 ```
 
 | 세션 | 내용 | 산출 파일 |
@@ -696,6 +707,7 @@ S1 core/kernel 기반 → S2 I/O·스레드 → S3 핸드셰이크·메시지 �
 | S15 | `SrsHttpConn` 부활 + 블로킹 서빙 | `srs_app_http_conn.*`(복원·개조), `srs_app_server.*`(HTTP 리스너), `utest/srs_utest_http.cpp` |
 | S16 | LL-HLS 통합 검증(hls.js 실재생·지연 실측) + SPS 해상도 파싱 + 문서 | `srs_kernel_codec.*`(avc_demux_sps), `srs_kernel_buffer.*`(SrsBitBuffer), `srs_kernel_mp4.cpp`(해상도 기록), `www/llhls.html`, `docs/part11-llhls.md`, `README.md`, `runner.sh` |
 | S17 | 데모 자산 정리 (서버 코드 변경 없음) | `www/hls.html`(개명·라이브 전용·지연 표시), `www/llhls.html`(라이브 전용), `publish.sh`(재인코딩), `conf/nginx.conf`, 문서 전반 |
+| S18 | LL-HLS 성능 개선 (동작 불변 — 복사·할당·시스템콜만 감소) | `srs_kernel_mp4.*`(트랙별 버퍼·writev flush), `srs_app_llhls.*`(shared_ptr 파트·move 게시·O(1) find), `srs_app_http_conn.*`(writev 응답·TCP_NODELAY·세그먼트 iov), `docs/part11-llhls.md`(§6.1 S18 해설 추가·코드 앵커 재동기화) |
 
 ### 검증 상태
 
@@ -739,6 +751,12 @@ S1 core/kernel 기반 → S2 I/O·스레드 → S3 핸드셰이크·메시지 �
 - **Safari에서도 `Hls.isSupported()`가 true**라 `www/llhls.html`은 Safari에서 네이티브가 아니라 **hls.js/MSE 경로로 재생된다** (네이티브는 CDN 로드 실패 시 폴백일 뿐). 이 경로로 재생 성공 — S16 문장 중 "Safari는 네이티브 LL-HLS로 재생"은 실제 동작이 아니었다
 - **네이티브 경로는 거부됐다**: 같은 페이지·같은 스트림에서 m3u8을 `video.src`에 직접 지정하면 `MEDIA_ERR_SRC_NOT_SUPPORTED`(code 4, `networkState=3`)로 실패 — 그 옆의 hls.js 재생은 정상. 원인은 미확인이며, 유력한 가설은 Apple이 LL-HLS 전송에 HTTP/2를 기대하는 반면 `SrsHttpConn`은 HTTP/1.1이라는 점(§5.6 S13의 미구현 목록에 HTTP/2가 있다). **가설이지 확인된 사실이 아니다** — 확정하려면 HTTP/2 프록시를 앞에 두고 재시험해야 한다
 - 서버 측 Safari 관례(`_HLS_part` 생략 = psn 0)는 그대로 utest로 커버된다 — 네이티브 재생 여부와 무관하게 유효
+
+**S18 성능 개선 검증** (macOS, ffmpeg/ffprobe 8.1 — 2026-09-04):
+
+- utest 130개 전부 통과 — 파트 바이트·플레이리스트·블로킹 경계 검증은 변경 전 테스트를 그대로 통과(테스트는 `parts[i].get()` 2줄만 수정)
+- 실스트림(testsrc 640x360 30fps + AAC, GOP 2초) 14초 publish: init+완결 세그먼트를 이어 붙인 파일이 ffmpeg 디코딩 오류 0건, 비디오 정확히 60프레임(2초×30fps)·오디오 86프레임. 힌트된 미래 파트 GET은 홀드 후 200, 블로킹 리로드(`_HLS_msn=최신+1`)는 0.415초 홀드 후 새 파트가 실린 m3u8로 200. `Content-Length`/`keep-alive` 헤더 동일
+- 동시성 스트레스: 40초 publish 동안 8클라이언트가 m3u8 + 나열된 파트 전부 + **가장 오래된 세그먼트**를 반복 GET(윈도우 만료와 응답이 겹치도록) — 10,081건 200, 서버 오류 0, 크래시 없음. 실패 55건은 전부 m3u8 수신과 세그먼트 GET 사이에 윈도우에서 밀려난 404(정상 만료)
 
 ### 의도적으로 남긴 미구현
 

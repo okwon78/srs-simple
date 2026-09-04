@@ -5,6 +5,7 @@
 
 #include <chrono>
 #include <sstream>
+#include <utility>
 
 #include <srs_app_config.hpp>
 #include <srs_kernel_codec.hpp>
@@ -64,6 +65,13 @@ srs_error_t SrsLlHlsBufferWriter::write(void* buf, size_t size, ssize_t* nwrite)
 
 srs_error_t SrsLlHlsBufferWriter::writev(const iovec* iov, int iov_size, ssize_t* nwrite)
 {
+    // 총량을 먼저 예약해 append 도중의 재할당을 막는다 (파트당 writev 1회 — S18).
+    size_t total_len = 0;
+    for (int i = 0; i < iov_size; i++) {
+        total_len += iov[i].iov_len;
+    }
+    data.reserve(data.size() + total_len);
+
     ssize_t total = 0;
     for (int i = 0; i < iov_size; i++) {
         data.append((const char*)iov[i].iov_base, iov[i].iov_len);
@@ -95,11 +103,7 @@ SrsLlHlsSegment::SrsLlHlsSegment(int64_t seq)
 
 SrsLlHlsSegment::~SrsLlHlsSegment()
 {
-    deque<SrsLlHlsPart*>::iterator it;
-    for (it = parts.begin(); it != parts.end(); ++it) {
-        SrsLlHlsPart* part = *it;
-        srs_freep(part);
-    }
+    // 파트는 shared_ptr — 응답 중인 HTTP 스레드가 마지막 참조를 놓을 때 해제된다.
     parts.clear();
 }
 
@@ -161,8 +165,8 @@ string SrsLlHlsChunklist::generate(const deque<SrsLlHlsSegment*>& segments, bool
 
         // 파트는 최근 SRS_LLHLS_PART_SEGMENTS개 세그먼트에만 — 그 이전은 EXTINF만.
         if (seg->msn > last->msn - SRS_LLHLS_PART_SEGMENTS) {
-            for (deque<SrsLlHlsPart*>::const_iterator pit = seg->parts.begin(); pit != seg->parts.end(); ++pit) {
-                SrsLlHlsPart* part = *pit;
+            for (deque<SrsLlHlsPartPtr>::const_iterator pit = seg->parts.begin(); pit != seg->parts.end(); ++pit) {
+                const SrsLlHlsPartPtr& part = *pit;
                 ss << "#EXT-X-PART:DURATION=" << srsu2msi(part->duration) / 1000.0
                    << ",URI=\"" << srs_llhls_part_uri(stream_, seg->msn, part->psn) << "\"";
                 if (part->independent) {
@@ -272,6 +276,17 @@ bool SrsLlHlsStorage::get_init(string& v)
 
 void SrsLlHlsStorage::append_part(const string& payload, srs_utime_t duration, bool independent, bool close_segment)
 {
+    append_part(string(payload), duration, independent, close_segment);
+}
+
+void SrsLlHlsStorage::append_part(string&& payload, srs_utime_t duration, bool independent, bool close_segment)
+{
+    // 파트 객체와 페이로드 인수는 락 밖에서 준비한다 — 락 안은 포인터 조작뿐 (S18).
+    SrsLlHlsPartPtr part(new SrsLlHlsPart());
+    part->duration = duration;
+    part->independent = independent;
+    part->payload.swap(payload);
+
     lock_guard<mutex> guard(lock_);
 
     // 열린(미완결) 세그먼트가 없으면 새 msn으로 연다.
@@ -283,12 +298,7 @@ void SrsLlHlsStorage::append_part(const string& payload, srs_utime_t duration, b
         seg = segments_.back();
     }
 
-    SrsLlHlsPart* part = new SrsLlHlsPart();
     part->psn = (int)seg->parts.size();
-    part->duration = duration;
-    part->independent = independent;
-    part->payload = payload;
-
     seg->parts.push_back(part);
     seg->duration += duration;
 
@@ -319,7 +329,7 @@ bool SrsLlHlsStorage::get_playlist(string& v)
     return true;
 }
 
-bool SrsLlHlsStorage::get_part(int64_t msn, int psn, string& payload)
+bool SrsLlHlsStorage::get_part(int64_t msn, int psn, SrsLlHlsPartPtr& part)
 {
     lock_guard<mutex> guard(lock_);
 
@@ -328,11 +338,21 @@ bool SrsLlHlsStorage::get_part(int64_t msn, int psn, string& payload)
         return false;
     }
 
-    payload = seg->parts[psn]->payload;
+    part = seg->parts[psn];
     return true;
 }
 
-bool SrsLlHlsStorage::get_segment(int64_t msn, string& payload)
+bool SrsLlHlsStorage::get_part(int64_t msn, int psn, string& payload)
+{
+    SrsLlHlsPartPtr part;
+    if (!get_part(msn, psn, part)) {
+        return false;
+    }
+    payload = part->payload;
+    return true;
+}
+
+bool SrsLlHlsStorage::get_segment(int64_t msn, vector<SrsLlHlsPartPtr>& parts)
 {
     lock_guard<mutex> guard(lock_);
 
@@ -341,10 +361,26 @@ bool SrsLlHlsStorage::get_segment(int64_t msn, string& payload)
         return false;
     }
 
+    parts.assign(seg->parts.begin(), seg->parts.end());
+    return true;
+}
+
+bool SrsLlHlsStorage::get_segment(int64_t msn, string& payload)
+{
+    vector<SrsLlHlsPartPtr> parts;
+    if (!get_segment(msn, parts)) {
+        return false;
+    }
+
+    size_t total = 0;
+    for (size_t i = 0; i < parts.size(); i++) {
+        total += parts[i]->payload.size();
+    }
+
     payload.clear();
-    deque<SrsLlHlsPart*>::iterator it;
-    for (it = seg->parts.begin(); it != seg->parts.end(); ++it) {
-        payload.append((*it)->payload);
+    payload.reserve(total);
+    for (size_t i = 0; i < parts.size(); i++) {
+        payload.append(parts[i]->payload);
     }
     return true;
 }
@@ -409,13 +445,14 @@ bool SrsLlHlsStorage::reached(int64_t msn, int psn)
 
 SrsLlHlsSegment* SrsLlHlsStorage::find(int64_t msn)
 {
-    deque<SrsLlHlsSegment*>::iterator it;
-    for (it = segments_.begin(); it != segments_.end(); ++it) {
-        if ((*it)->msn == msn) {
-            return *it;
-        }
+    if (segments_.empty()) {
+        return NULL;
     }
-    return NULL;
+    int64_t idx = msn - segments_.front()->msn;
+    if (idx < 0 || idx >= (int64_t)segments_.size()) {
+        return NULL;
+    }
+    return segments_[(size_t)idx];
 }
 
 void SrsLlHlsStorage::shrink()
@@ -683,7 +720,8 @@ srs_error_t SrsLlHlsMuxer::flush_part(int64_t end_dts, bool close_segment)
     bool independent = part_has_video ? part_independent : !video_configured_;
     srs_utime_t duration = (end_dts - part_start_dts) * SRS_UTIME_MILLISECONDS;
 
-    storage->append_part(writer.data, duration, independent, close_segment);
+    // 파트 바이트는 복사 없이 storage로 넘긴다 (rvalue 오버로드 — S18).
+    storage->append_part(std::move(writer.data), duration, independent, close_segment);
 
     if (close_segment) {
         segment_duration = 0;

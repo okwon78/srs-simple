@@ -26,6 +26,7 @@
 
 #include <srs_core.hpp>
 
+#include <string>
 #include <vector>
 
 #include <srs_kernel_codec.hpp>
@@ -45,6 +46,9 @@ enum SrsMp4HandlerType
 
 // A cached sample of one fMP4 fragment. (원본: SrsMp4Sample — offset/adjust 등 제거,
 // type은 SrsFrameType 대신 handler type을 그대로 든다)
+// 원본과 달리 샘플 바이트를 들지 않는다(메타데이터만) — 바이트는 도착 즉시
+// 인코더의 트랙별 연속 버퍼(mdat 본문)에 이어 붙인다 (CLAUDE.md §5.6 S18:
+// 샘플마다 new[]+memcpy 하던 것을 파트당 버퍼 1개로 — hub 스레드 힙 할당 제거).
 class SrsMp4Sample
 {
 public:
@@ -55,9 +59,8 @@ public:
     uint64_t pts;
     // For video, the frame type, whether keyframe.
     SrsVideoAvcFrameType frame_type;
-    // The sample data, owned by this object.
+    // The sample size in bytes (바이트 자체는 인코더의 트랙 버퍼에 있다).
     uint32_t nb_data;
-    uint8_t* data;
 public:
     SrsMp4Sample();
     virtual ~SrsMp4Sample();
@@ -65,16 +68,17 @@ public:
 
 // The samples of one fMP4 fragment. (원본: SrsMp4SampleManager — moov(stbl) 쓰기와
 // 디코드용 load 제거, moof(trun) 조립은 SrsMp4M2tsSegmentEncoder::flush가 직접 한다)
+// 샘플은 포인터가 아니라 값으로 보관한다 — 메타데이터뿐이라 힙 객체가 필요 없다 (S18).
 class SrsMp4SampleManager
 {
 public:
-    std::vector<SrsMp4Sample*> samples;
+    std::vector<SrsMp4Sample> samples;
 public:
     SrsMp4SampleManager();
     virtual ~SrsMp4SampleManager();
 public:
     // Append the sample to the tail of the manager.
-    virtual void append(SrsMp4Sample* sample);
+    virtual void append(const SrsMp4Sample& sample);
 };
 
 // A fMP4 encoder, to write the init.mp4 with sequence header.
@@ -122,6 +126,11 @@ private:
     uint32_t nb_videos;
     uint64_t mdat_bytes;
     SrsMp4SampleManager* samples;
+    // mdat 본문을 트랙별로 미리 이어 붙인다 — mdat은 [video 샘플들][audio 샘플들]
+    // 순서이고 trun의 data_offset은 트랙당 하나라 트랙별로만 연속이면 된다.
+    // write_sample이 여기에 memcpy 1회, flush는 moof/mdat 헤더와 함께 writev 1회 (S18).
+    std::string video_data_;
+    std::string audio_data_;
 public:
     SrsMp4M2tsSegmentEncoder();
     virtual ~SrsMp4M2tsSegmentEncoder();

@@ -56,12 +56,10 @@ SrsMp4Sample::SrsMp4Sample()
     dts = pts = 0;
     frame_type = SrsVideoAvcFrameTypeForbidden;
     nb_data = 0;
-    data = NULL;
 }
 
 SrsMp4Sample::~SrsMp4Sample()
 {
-    srs_freepa(data);
 }
 
 SrsMp4SampleManager::SrsMp4SampleManager()
@@ -70,15 +68,9 @@ SrsMp4SampleManager::SrsMp4SampleManager()
 
 SrsMp4SampleManager::~SrsMp4SampleManager()
 {
-    vector<SrsMp4Sample*>::iterator it;
-    for (it = samples.begin(); it != samples.end(); ++it) {
-        SrsMp4Sample* sample = *it;
-        srs_freep(sample);
-    }
-    samples.clear();
 }
 
-void SrsMp4SampleManager::append(SrsMp4Sample* sample)
+void SrsMp4SampleManager::append(const SrsMp4Sample& sample)
 {
     samples.push_back(sample);
 }
@@ -528,26 +520,26 @@ srs_error_t SrsMp4M2tsSegmentEncoder::write_sample(SrsMp4HandlerType ht,
 ) {
     srs_error_t err = srs_success;
 
-    SrsMp4Sample* ps = new SrsMp4Sample();
+    SrsMp4Sample ps;
 
+    // We should copy the sample data, which is a shared ptr from the video/audio message.
+    // 샘플별 힙 버퍼 대신 트랙별 연속 버퍼에 이어 붙인다 — 이 memcpy 1회가 파트의
+    // 유일한 샘플 복사다 (헤더 주석, CLAUDE.md §5.6 S18).
     if (ht == SrsMp4HandlerTypeVIDE) {
-        ps->frame_type = (SrsVideoAvcFrameType)ft;
+        ps.frame_type = (SrsVideoAvcFrameType)ft;
         nb_videos++;
+        video_data_.append((const char*)sample, nb_sample);
     } else if (ht == SrsMp4HandlerTypeSOUN) {
         nb_audios++;
+        audio_data_.append((const char*)sample, nb_sample);
     } else {
-        srs_freep(ps);
         return err;
     }
 
-    ps->type = ht;
-    ps->dts = dts;
-    ps->pts = pts;
-
-    // We should copy the sample data, which is a shared ptr from the video/audio message.
-    ps->data = new uint8_t[nb_sample];
-    memcpy(ps->data, sample, nb_sample);
-    ps->nb_data = nb_sample;
+    ps.type = ht;
+    ps.dts = dts;
+    ps.pts = pts;
+    ps.nb_data = nb_sample;
 
     samples->append(ps);
     mdat_bytes += nb_sample;
@@ -597,13 +589,7 @@ srs_error_t SrsMp4M2tsSegmentEncoder::flush(uint64_t& dts)
 
     // mdat 페이로드는 video 샘플들 → audio 샘플들 순서. 각 trun의 data_offset은
     // moof 시작부터 그 트랙 첫 바이트까지 = moof 크기 + mdat 헤더(8) + 앞 트랙 크기.
-    uint64_t video_bytes = 0;
-    vector<SrsMp4Sample*>::iterator it;
-    for (it = samples->samples.begin(); it != samples->samples.end(); ++it) {
-        if ((*it)->type == SrsMp4HandlerTypeVIDE) {
-            video_bytes += (*it)->nb_data;
-        }
-    }
+    uint64_t video_bytes = (uint64_t)video_data_.size();
 
     int moof_bytes = b.pos();
     if (video_offset_pos >= 0) {
@@ -619,34 +605,26 @@ srs_error_t SrsMp4M2tsSegmentEncoder::flush(uint64_t& dts)
         p[2] = (uint8_t)((v >> 8) & 0xff); p[3] = (uint8_t)(v & 0xff);
     }
 
-    if ((err = writer->write(b.data(), b.pos(), NULL)) != srs_success) {
-        return srs_error_wrap(err, "write moof");
+    // Write moof + mdat(header + video bytes + audio bytes) in one writev —
+    // 트랙 버퍼가 이미 연속이라 샘플 단위 write가 필요 없다 (S18).
+    char mdat[8];
+    SrsBuffer mb(mdat, sizeof(mdat));
+    mb.write_4bytes((int32_t)(8 + mdat_bytes));
+    mb.write_bytes((char*)"mdat", 4);
+
+    iovec iovs[4];
+    int nb_iovs = 0;
+    iovs[nb_iovs].iov_base = b.data(); iovs[nb_iovs].iov_len = (size_t)b.pos(); nb_iovs++;
+    iovs[nb_iovs].iov_base = mdat; iovs[nb_iovs].iov_len = sizeof(mdat); nb_iovs++;
+    if (!video_data_.empty()) {
+        iovs[nb_iovs].iov_base = (void*)video_data_.data(); iovs[nb_iovs].iov_len = video_data_.size(); nb_iovs++;
+    }
+    if (!audio_data_.empty()) {
+        iovs[nb_iovs].iov_base = (void*)audio_data_.data(); iovs[nb_iovs].iov_len = audio_data_.size(); nb_iovs++;
     }
 
-    // Write mdat: header(size+type) 후 페이로드는 샘플에서 직접 (버퍼 복사 없이).
-    if (true) {
-        char mdat[8];
-        SrsBuffer mb(mdat, sizeof(mdat));
-        mb.write_4bytes((int32_t)(8 + mdat_bytes));
-        mb.write_bytes((char*)"mdat", 4);
-        if ((err = writer->write(mdat, sizeof(mdat), NULL)) != srs_success) {
-            return srs_error_wrap(err, "write mdat");
-        }
-
-        for (it = samples->samples.begin(); it != samples->samples.end(); ++it) {
-            SrsMp4Sample* sample = *it;
-            if (sample->type != SrsMp4HandlerTypeVIDE) continue;
-            if ((err = writer->write(sample->data, sample->nb_data, NULL)) != srs_success) {
-                return srs_error_wrap(err, "write video sample");
-            }
-        }
-        for (it = samples->samples.begin(); it != samples->samples.end(); ++it) {
-            SrsMp4Sample* sample = *it;
-            if (sample->type != SrsMp4HandlerTypeSOUN) continue;
-            if ((err = writer->write(sample->data, sample->nb_data, NULL)) != srs_success) {
-                return srs_error_wrap(err, "write audio sample");
-            }
-        }
+    if ((err = writer->writev(iovs, nb_iovs, NULL)) != srs_success) {
+        return srs_error_wrap(err, "write moof+mdat");
     }
 
     return err;
@@ -656,11 +634,11 @@ void SrsMp4M2tsSegmentEncoder::write_traf(SrsBuffer* b, SrsMp4HandlerType ht, ui
     uint64_t end_dts, int* pdata_offset_pos)
 {
     // 이 트랙의 샘플만 도착 순서(dts 오름차순)대로 모은다.
-    vector<SrsMp4Sample*> tses;
-    vector<SrsMp4Sample*>::iterator it;
+    vector<const SrsMp4Sample*> tses;
+    vector<SrsMp4Sample>::const_iterator it;
     for (it = samples->samples.begin(); it != samples->samples.end(); ++it) {
-        if ((*it)->type == ht) {
-            tses.push_back(*it);
+        if (it->type == ht) {
+            tses.push_back(&*it);
         }
     }
 
@@ -700,7 +678,7 @@ void SrsMp4M2tsSegmentEncoder::write_traf(SrsBuffer* b, SrsMp4HandlerType ht, ui
 
         uint64_t previous_duration = 0;
         for (size_t i = 0; i < tses.size(); i++) {
-            SrsMp4Sample* sample = tses[i];
+            const SrsMp4Sample* sample = tses[i];
 
             // duration = 다음 샘플 dts와의 간격. 마지막은 end_dts로 닫되,
             // end_dts가 뒤(과거)면 직전 duration 재사용 (원본은 무검사 뺄셈 — 언더플로 방지).

@@ -24,8 +24,9 @@
 Part 10 §9에서 HLS의 지연을 해부하며 세 개의 층을 찾았다 — **세그먼트가 닫힐
 때까지**(최대 10초), **플레이어의 폴링 간격**(초 단위), **사전 버퍼**(세그먼트
 2~3개). 합쳐서 수십 초. 그리고 그 끝에 "세그먼트를 더 잘게 쪼개 완성 전에 배달하는
-LL-HLS가 있다"고 예고했었다. srs_simple은 S12~S15에서 그것을 구현했다. 서버를
-띄우면 이제 같은 publish가 세 갈래로 나간다:
+LL-HLS가 있다"고 예고했었다. srs_simple은 S12~S15에서 그것을 구현했고, S18에서
+서빙 경로의 불필요한 복사를 걷어냈다(§6.1). 서버를 띄우면 이제 같은 publish가 세
+갈래로 나간다:
 
 ```text
 ffmpeg ── RTMP publish ──▶ srs_simple ──┬─ RTMP play ──▶ ffplay          (지연 1초 미만)
@@ -127,18 +128,24 @@ duration/크기/키프레임 여부를 서술한다. 컨테이너 변환이라�
 fMP4는 DASH의 컨테이너이기도 해서, 원본 SRS의 DASH 경로에 인코더가 이미 있다.
 이름을 그대로 가져왔다(D1 — 1:1 미러링 원칙):
 
-- [`SrsMp4M2tsInitEncoder::write`](../src/kernel/srs_kernel_mp4.cpp#L101) —
+- [`SrsMp4M2tsInitEncoder::write`](../src/kernel/srs_kernel_mp4.cpp#L93) —
   ftyp + moov. moov 안에 트랙마다 trak(코덱 설정: `avc1`+`avcC` /
   `mp4a`+`esds`)과, fragmented 필수인 mvex(trex)가 들어간다. 원본 시그니처
   `write(format, video, tid)`(트랙 1개)에 muxed 오버로드
-  [`write(format)`](../src/kernel/srs_kernel_mp4.cpp#L110)(video tid=1 + audio
+  [`write(format)`](../src/kernel/srs_kernel_mp4.cpp#L102)(video tid=1 + audio
   tid=2를 한 moov에)를 추가했다 — 이유는 §2.2
-- [`SrsMp4M2tsSegmentEncoder`](../src/kernel/srs_kernel_mp4.hpp#L108) —
-  styp + moof + mdat. [`write_sample`](../src/kernel/srs_kernel_mp4.cpp#L526)로
-  샘플을 누적하고 [`flush`](../src/kernel/srs_kernel_mp4.cpp#L558)가 moof를
+- [`SrsMp4M2tsSegmentEncoder`](../src/kernel/srs_kernel_mp4.hpp#L112) —
+  styp + moof + mdat. [`write_sample`](../src/kernel/srs_kernel_mp4.cpp#L518)로
+  샘플을 누적하고 [`flush`](../src/kernel/srs_kernel_mp4.cpp#L550)가 moof를
   조립한다. moof의 핵심 필드는 **tfdt**(이 조각의 시작 dts — timescale 1000이라
   RTMP ms 그대로)와 **trun**(샘플별 duration/size/flags/cts, 그리고 mdat 내
-  오프셋 `data_offset` — moof 크기가 확정된 뒤 역산해 패치한다)
+  오프셋 `data_offset` — moof 크기가 확정된 뒤 역산해 패치한다). 샘플 **바이트**는
+  원본과 달리 `SrsMp4Sample`이 들지 않는다 — `write_sample`이 도착 즉시 **트랙별
+  연속 버퍼**(`video_data_`/`audio_data_`)에 이어 붙이고(파트당 샘플 복사는 이
+  memcpy 1회뿐), `flush`는 moof + mdat 헤더 + 두 버퍼를 **writev 1회**로 내보낸다.
+  mdat이 `[video 샘플들][audio 샘플들]` 순서이고 trun의 `data_offset`이 트랙당
+  하나라, 트랙별로만 연속이면 충분하다는 관찰이 근거다 (S18 — 샘플마다 `new[]`
+  하던 초기 구현과 출력 바이트는 동일하다. §6.1)
 
 원본 9,000줄짜리 `srs_kernel_mp4`는 박스마다 클래스가 있는 트리인데, srs_simple은
 Part 10 §6의 TS 먹서와 같은 방식으로 **박스 클래스 트리를 들어내고 인코더가
@@ -160,9 +167,9 @@ RENDITION-REPORT로 서로를 알린다. srs_simple은 **하나의 init.mp4(trak
    꼬리 파트에는 비디오 샘플이 우연히 없을 수 있다. 초기 구현은 "단독 트랙이면 그
    traf가 tid"로 추론했는데, 이러면 오디오 전용 파트의 AAC가 **비디오 트랙(1)로
    선언되어 h264로 디코딩**된다 ("Invalid NAL unit size").
-   [`set_audio_tid`](../src/kernel/srs_kernel_mp4.hpp#L136)를 추가해 파트 내용이
+   [`set_audio_tid`](../src/kernel/srs_kernel_mp4.hpp#L145)를 추가해 파트 내용이
    아니라 **스트림 구성(init의 트랙 배치) 기준**으로 고정했다 —
-   [`open_part`](../src/app/srs_app_llhls.cpp#L632)가 muxed면 2, 오디오 단독이면
+   [`open_part`](../src/app/srs_app_llhls.cpp#L669)가 muxed면 2, 오디오 단독이면
    1을 명시한다
 2. **해상도 0을 거부하는 브라우저** (S16에서 발견): S10에서 SPS 비트스트림 파싱을
    제거했으므로 처음에는 avc1/tkhd의 width/height를 0으로 뒀다 — ffprobe와 ffmpeg은
@@ -178,10 +185,10 @@ RENDITION-REPORT로 서로를 알린다. srs_simple은 **하나의 init.mp4(trak
 
 ## 3. 진입점 — SrsLlHls, 그리고 dts의 직진
 
-허브에서 LL-HLS로 들어가는 문은 [`SrsLlHls`](../src/app/srs_app_llhls.hpp#L269)다.
+허브에서 LL-HLS로 들어가는 문은 [`SrsLlHls`](../src/app/srs_app_llhls.hpp#L282)다.
 Part 10의 `SrsHls`와 완전히 대칭인 인터페이스(initialize / on_publish /
-on_unpublish / [on_audio](../src/app/srs_app_llhls.cpp#L813) /
-[on_video](../src/app/srs_app_llhls.cpp#L851))로, `SrsOriginHub`가 기존 hls와
+on_unpublish / [on_audio](../src/app/srs_app_llhls.cpp#L851) /
+[on_video](../src/app/srs_app_llhls.cpp#L889))로, `SrsOriginHub`가 기존 hls와
 나란히 부른다. 오류 전략도 동일하다 — 경고 찍고 `on_unpublish` 후 삼킨다.
 LL-HLS가 넘어져도 RTMP와 TS-HLS는 계속된다 (Part 10 §3의 'ignore' 전략).
 
@@ -193,7 +200,7 @@ ms 타임스탬프가 무환산으로 tfdt/trun에 들어간다**. 컨테이너�
 
 시퀀스 헤더의 취급도 대칭이다: 세그먼트에 쓰지 않고 마킹만 한다(Part 10 §5.2와
 같은 이유 — 설정은 init.mp4의 몫이다). 단, **변경 감지**가 추가됐다.
-[`on_sequence_header`](../src/app/srs_app_llhls.cpp#L491)는 avcC/ASC 원문을
+[`on_sequence_header`](../src/app/srs_app_llhls.cpp#L528)는 avcC/ASC 원문을
 비교해 동일 재전송(OBS가 재연결 때 자주 한다)은 무시하고, 실제로 달라졌으면 진행
 중 세그먼트를 닫고 다음 세그먼트 선두에서 init.mp4를 재생성한다 — 다른 코덱
 설정이 한 `#EXT-X-MAP`을 공유하면 안 되기 때문이다. (알려진 한계: init URL이
@@ -222,7 +229,7 @@ test/2.m4s                                        ← 파트들의 부모 세그
 따라가고, 늦게 합류한 플레이어는 완결된 세그먼트(`{msn}.m4s` = 파트들의 연결)를
 통째로 받는다. 같은 바이트에 두 개의 접근 단위가 있는 셈이다.
 
-어디서 자를 것인가가 [`SrsLlHlsMuxer::maybe_cut`](../src/app/srs_app_llhls.cpp#L603)
+어디서 자를 것인가가 [`SrsLlHlsMuxer::maybe_cut`](../src/app/srs_app_llhls.cpp#L640)
 의 정책이고, 스펙의 두 제약이 규칙을 결정한다 — 파트는 PART-TARGET을 **넘으면 안
 되고**(상한), 마지막 파트를 제외하면 85% **이상이어야 한다**(하한):
 
@@ -248,7 +255,7 @@ if (part_dur >= part_target
 세그먼트 컷 조건(키프레임 도착 && 목표 초과)은 Part 10 §7의 TS 세그먼터와 완전히
 같은 정책이다 — **세그먼트의 첫 프레임은 여전히 IDR이어야 한다.** 파트에는 그
 제약이 없는 대신, 키프레임으로 시작하는 파트에 `INDEPENDENT=YES`를 마킹한다
-([`flush_part`](../src/app/srs_app_llhls.cpp#L668) — 비디오 없는 파트는
+([`flush_part`](../src/app/srs_app_llhls.cpp#L705) — 비디오 없는 파트는
 pure-audio 스트림에서만 independent다. AAC 프레임은 전부 독립이므로). 플레이어는
 이 표시를 보고 "여기부터 디코딩을 시작할 수 있다"를 안다 — GOP 캐시(Part 8)와
 키프레임 컷(Part 10)이 풀던 문제의 파트 버전이다.
@@ -268,28 +275,32 @@ Part 10 §7의 배달 인프라를 떠올려 보자 — `.tmp` 쓰기 + rename, 
 짧고 초당 2번 게시되며, §6의 블로킹 서빙과 상태를 공유해야 한다 — 디스크를 거칠
 이유가 없다 (OME도 gohlslib도 인메모리다. D3).
 
-[`SrsLlHlsStorage`](../src/app/srs_app_llhls.hpp#L129)가 그 저장소다:
+[`SrsLlHlsStorage`](../src/app/srs_app_llhls.hpp#L135)가 그 저장소다:
 
 ```text
 SrsLlHlsStorage {
     deque<SrsLlHlsSegment*> segments_;   // 롤링 윈도우 (llhls_segment_count=10개 = 20초)
-    SrsLlHlsSegment { deque<SrsLlHlsPart*> parts; msn; duration; completed; }
+    SrsLlHlsSegment { deque<SrsLlHlsPartPtr> parts; msn; duration; completed; }
     SrsLlHlsPart    { payload(styp+moof+mdat); duration; independent; psn; }
+                     ▲ SrsLlHlsPartPtr = shared_ptr<SrsLlHlsPart> — 포인터인 이유는 §6.1
     string init_;                        // init.mp4 바이트
     string playlist_;                    // m3u8 캐시 (게시마다 재생성)
     std::mutex + std::condition_variable // ← §6의 심장
 }
 ```
 
+윈도우 안의 msn은 연속이다(`next_msn_++`로만 늘고 앞에서만 pop) — 그래서 조회는
+탐색이 아니라 `msn - front->msn`을 deque 인덱스로 쓰는 O(1) 산술이다(`find`, S18).
+
 Part 10의 원자성 3종 세트는 **락 하나**로 대체된다. muxer가
-[`append_part`](../src/app/srs_app_llhls.cpp#L273)로 파트를 게시하면, 같은 락
-안에서 — 윈도우 [shrink](../src/app/srs_app_llhls.cpp#L421)(완결된 앞쪽만 밀어냄,
+[`append_part`](../src/app/srs_app_llhls.cpp#L282)로 파트를 게시하면, 같은 락
+안에서 — 윈도우 [shrink](../src/app/srs_app_llhls.cpp#L458)(완결된 앞쪽만 밀어냄,
 파트는 부모 세그먼트와 함께 소멸) → m3u8 재생성
-([`refresh_playlist`](../src/app/srs_app_llhls.cpp#L431)) → `notify_all()` 순서로
+([`refresh_playlist`](../src/app/srs_app_llhls.cpp#L468)) → `notify_all()` 순서로
 일어난다. **재생성이 notify보다 먼저**라는 순서가 §6의 정합성을 만든다: 블로킹
 리로드에서 깨어난 HTTP 스레드는 항상 방금 게시된 파트가 실린 플레이리스트를 읽는다.
 
-플레이리스트 생성기 [`SrsLlHlsChunklist::generate`](../src/app/srs_app_llhls.cpp#L123)
+플레이리스트 생성기 [`SrsLlHlsChunklist::generate`](../src/app/srs_app_llhls.cpp#L127)
 는 게시마다 문자열 전체를 다시 만든다(OME MakeChunklist의 태그 순서 준수). 새
 태그들이 LL-HLS의 계약을 선언한다:
 
@@ -352,19 +363,19 @@ GET /live/test.m3u8?_HLS_msn=91&_HLS_part=1
 없다 (nginx를 쓰려면 캐싱 프록시로 오리진 앞에 세우는 구조가 된다 —
 llhls-streaming의 배포 모델). S10의 정적 파일 코드에서 두 가지가 바뀌었다:
 
-1. **keep-alive 루프** ([`do_cycle`](../src/app/srs_app_http_conn.cpp#L107)):
+1. **keep-alive 루프** ([`do_cycle`](../src/app/srs_app_http_conn.cpp#L117)):
    LL-HLS 플레이어는 초당 수 회 요청한다(m3u8 리로드 + 파트 GET). 요청마다 연결을
    끊으면 폭주하므로, 요청 파싱 → 응답을 idle 타임아웃까지 반복한다.
    Content-Length를 정확히 쓰는 것이 전제다 — 그래야 클라이언트가 한 연결에서
    응답 경계를 안다
-2. **블로킹 = cond_wait** ([`hold`](../src/app/srs_app_http_conn.cpp#L385)):
+2. **블로킹 = cond_wait** ([`hold`](../src/app/srs_app_http_conn.cpp#L401)):
    여기서 §5.1의 pthread 선택이 **처음으로 원본(ST)보다 단순해진다**. OME는
    비동기 이벤트 루프라 홀드된 요청을 pending 큐에 넣고 게시 콜백이 꺼내는 구조가
    필요하지만, srs_simple은 1-connection-1-thread이므로 **HTTP 스레드가
    `storage->wait_for()`에서 그냥 잔다**. 게시의 `notify_all()`이 깨우면 응답하러
    돌아간다 — 조건 변수 대기가 곧 블로킹 리로드다
 
-홀드할지 즉시 응답할지의 판정은 [`reached`](../src/app/srs_app_llhls.cpp#L395)에
+홀드할지 즉시 응답할지의 판정은 [`reached`](../src/app/srs_app_llhls.cpp#L431)에
 있다 — OME `GetChunklist`의 조건식과 동치다:
 
 ```text
@@ -376,13 +387,13 @@ llhls-streaming의 배포 모델). S10의 정적 파일 코드에서 두 가지�
 단, msn > latest + 2                    → 홀드 없이 400 (스펙 관례 — 너무 먼 미래)
 ```
 
-[`serve_playlist`](../src/app/srs_app_http_conn.cpp#L313)가 이 판정으로 400/홀드를
+[`serve_playlist`](../src/app/srs_app_http_conn.cpp#L320)가 이 판정으로 400/홀드를
 가르고, 타임아웃(3×세그먼트=6초)이면 그 시점 최신으로 200을 준다.
-[`serve_part`](../src/app/srs_app_http_conn.cpp#L359)는 힌트된 파트의 홀드 후
+[`serve_part`](../src/app/srs_app_http_conn.cpp#L367)는 힌트된 파트의 홀드 후
 200과 만료 404를 맡는다.
 
 마지막 디테일이 §5.1 이디엄의 총집편이다.
-[`hold`](../src/app/srs_app_http_conn.cpp#L385)는 `wait_for`를 통짜 6초로 부르지
+[`hold`](../src/app/srs_app_http_conn.cpp#L401)는 `wait_for`를 통짜 6초로 부르지
 않고 **100ms 슬라이스**로 나눠 사이마다 `trd->pull()`을 확인한다 — 게시는
 notify_all로 즉시, unpublish는 `active()` 확인으로, 연결/서버 종료는 pull()로,
 어느 쪽이든 100ms 안에 깨어난다. 소켓 shutdown이 cond_wait를 깨울 수 없는 pthread
@@ -397,6 +408,59 @@ notify_all로 즉시, unpublish는 `active()` 확인으로, 연결/서버 종료
 경계(BlockingBoundaries), 힌트 파트 홀드 → 게시 → 바이트
 일치(PreloadHintPartHold), unpublish가 홀드를 깨우고 연결이 누수 없이
 reap되는지(UnpublishWakesHold).
+
+### 6.1 락 안에서는 포인터만, 응답은 한 번에 — S18의 세 가지 손질
+
+S15의 서빙 경로는 동작은 맞았지만, Part 9의 눈으로 다시 보면 낭비가 세 군데
+있었다. 프로토콜 동작·플레이리스트·바이트 레이아웃은 그대로 두고 **복사·할당·
+시스템콜 횟수만** 줄인 것이 S18이다 (CLAUDE.md §5.6 S18).
+
+**① HTTP 스레드가 storage lock 안에서 바이트를 복사하지 않는다.** 초기 구현의
+`get_part`는 락을 잡은 채 파트 페이로드(100~500KB)를 `std::string`으로 복사해
+돌려줬다. 플레이어가 N명이면 파트마다 N번의 복사가 **락 안에서** 일어나고, 그
+락은 §5.1의 규율대로 hub 스레드 — source lock을 쥔 채 RTMP 팬아웃까지 멈춰 있는
+publisher 스레드 — 가 기다리는 락이다. LL-HLS 시청자가 늘수록 RTMP 시청자까지
+느려지는 구조였던 셈이다. 해법은 Part 9 §2의 `SrsSharedPtrMessage`와 같다: 파트를
+[`SrsLlHlsPartPtr`](../src/app/srs_app_llhls.hpp#L90)(`std::shared_ptr`)로 공유해
+[`get_part`](../src/app/srs_app_llhls.cpp#L332)는 락 안에서 **포인터 대입 한 번**만
+하고, 소켓 쓰기는 락 밖에서 한다. 응답 도중 윈도우에서 밀려나 세그먼트가 삭제돼도
+응답 스레드가 쥔 참조가 바이트를 붙든다 — 손수 만든 refcount(원본이 C++98 시절에
+쓴 `SrsSharedPtrPayload`)와 표준 라이브러리의 차이일 뿐, "바이트는 한 벌, 참조만
+늘린다"는 원리는 그대로다. 완결 세그먼트도 마찬가지다:
+[`get_segment`](../src/app/srs_app_llhls.cpp#L355)는 파트 **포인터 목록**만 넘기고
+[`serve_segment`](../src/app/srs_app_http_conn.cpp#L424)가 파트별 iov로 `writev`
+한다 — 세그먼트 크기의 임시 문자열을 만들지 않는다. string을 돌려주는 오버로드는
+편의·utest용으로 남겨 두었다.
+
+**② hub 스레드의 파트 복사 3회 → 1회.** 게시하는 쪽도 같은 진단을 받았다. 파트
+하나가 만들어지기까지 샘플마다 `new[]`+memcpy(초당 ~150회 힙 할당) → flush에서
+샘플 단위 append → `append_part`에서 `part->payload = payload` 재복사, 세 번을
+거쳤다. 지금은 인코더의 트랙별 버퍼에 memcpy 1회(§2.1) → moof/mdat 헤더와 함께
+writev 1회 → [`append_part(std::string&&)`](../src/app/srs_app_llhls.cpp#L282)로
+**이동**이다. 파트 객체와 페이로드 인수는 락 밖에서 준비하고, 락 안은 포인터
+조작뿐이다. ①과 합치면 "**락 안에서는 포인터만 만진다**"가 이 저장소의 규칙이
+된다 — §5의 락 순서 규율에 더해진 두 번째 규율이다.
+
+**③ 응답은 헤더+본문을 `writev` 1회로, 소켓은 `TCP_NODELAY`.** 초기 구현은 헤더와
+본문을 `send` 2회로 보냈다. 여기에 Nagle 알고리즘이 끼어든다 — 미확인(un-ACKed)
+데이터가 남아 있으면 MSS 미만의 새 조각을 ACK가 올 때까지 붙드는 규칙인데, 헤더가
+먼저 나가 미확인 상태가 되면 m3u8(~1KB)이나 파트의 꼬리 조각이 그 대상이 된다.
+클라이언트는 delayed-ACK로 수십 ms 뒤에야 ACK를 보내므로, **0.5초마다 오는 블로킹
+리로드 응답마다 수십 ms가 그대로 더해지는** 지연이었다. 그래서
+[`write_response`](../src/app/srs_app_http_conn.cpp#L459)는 헤더와 본문 iov를 하나의
+`writev`로 내보내고(커널 진입도 한 번), 생성자가
+[`TCP_NODELAY`](../src/app/srs_app_http_conn.cpp#L86)를 켠다. RTMP 소켓은 원본
+기본값대로 NODELAY를 켜지 않는다 — 큰 미디어 청크가 끊임없이 흐르는 쪽은 Nagle의
+영향이 작고, 작은 응답이 주기적으로 나가는 HTTP 쪽만 예외다.
+
+일부러 남긴 것도 있다. `refresh_playlist`의 stringstream 재생성(초당 2회, 수십
+µs)은 §5의 "재생성이 notify보다 먼저" 순서를 지키려고 락 안에 그대로 두었고,
+요청마다 찍히는 `srs_trace`는 블로킹 리로드를 눈으로 관찰하는 교육 포인트라
+남겼다. 검증은 이 변경의 성격을 그대로 보여준다 — utest 130개는 `parts[i].get()`
+두 줄만 고치고 전부 통과했고(파트 바이트·플레이리스트·블로킹 경계가 불변이라는
+뜻), 8클라이언트가 40초 동안 m3u8·파트·**가장 오래된 세그먼트**를 반복 GET하는
+스트레스에서 10,081건 200에 서버 오류 0건, 만료 404 55건뿐이었다(윈도우 삭제와
+응답이 겹치는 순간을 노린 시나리오 — ①의 참조 수명이 실제로 지켜지는지 확인).
 
 ---
 
@@ -429,7 +493,20 @@ Chrome/hls.js, 30fps + GOP 2초 + `-tune zerolatency` publish):
 라이브 엣지 지연(`hls.latency`)과 버퍼 길이를 0.5초마다 갱신해 표시하고, Part 10 §8의
 TS-HLS 페이지와 마찬가지로 **라이브 전용(DVR 비활성)**이다 — 뒤로 seek하거나 일시정지
 후 재개하면 `seeking`/`play` 핸들러가 `hls.liveSyncPosition`으로 스냅한다. 두 페이지를
-나란히 열면 같은 방식으로 측정한 지연이 ~30초와 ~2초로 갈리는 것을 볼 수 있다.
+나란히 열면 같은 방식으로 측정한 지연이 ~30초와 ~2초로 갈리는 것을 볼 수 있다 —
+S17에서 Safari 실기기로 두 페이지를 동시에 열었을 때의 표시값은 **LL-HLS 1.96초 /
+TS-HLS 33.07초**였다.
+
+Safari에 대해서는 정직하게 적어 둘 것이 하나 있다. §1의 그림은 시청자 자리에 "hls.js /
+Safari / ffplay"를 나란히 놓았지만, Safari에서 `www/llhls.html`이 재생되는 경로는
+**네이티브가 아니라 hls.js(MSE)**다 — Safari에서도 `Hls.isSupported()`가 true라
+페이지가 hls.js를 먼저 고른다. 같은 m3u8을 `video.src`에 직접 지정하는 네이티브
+경로는 `MEDIA_ERR_SRC_NOT_SUPPORTED`로 거부됐다(옆의 hls.js 재생은 정상). 원인은
+확인하지 못했고, 유력한 가설은 Apple이 LL-HLS 전송에 HTTP/2를 기대하는데
+`SrsHttpConn`은 HTTP/1.1이라는 점이다(CLAUDE.md §5.6 S13의 미구현 목록에 HTTP/2가
+있다) — 가설이지
+확인된 사실이 아니며, 확정하려면 HTTP/2 프록시를 앞에 두고 재시험해야 한다.
+서버 쪽의 Safari 관례(`_HLS_part` 생략 = psn 0, §6)는 이와 무관하게 utest로 유지된다.
 
 의도적으로 남긴 한계도 실측에서 확인된다: unpublish 직후의 마지막 파트가
 `DURATION=0.000`으로 실릴 수 있다(파트에 프레임이 1개일 때 — duration을 dts
@@ -460,6 +537,10 @@ LL-HLS 경로에서 들고 갈 것:
 6. **관용 도구로만 검증하지 말 것.** ffprobe가 통과시킨 init.mp4를 Chrome MSE가
    거부했다(해상도 0). 트랙 id 추론은 오디오 전용 파트에서 무너졌다. 실제 타깃
    플레이어를 조기에 물려야 나오는 버그들이다
+7. **락 안에서는 포인터만, 응답은 한 번에.** 파트는 `shared_ptr`로 공유해 HTTP
+   스레드가 락 밖에서 쓰고(Part 9 §2의 refcount 팬아웃과 같은 원리), 게시는
+   move로, 응답은 헤더+본문 writev 1회 + TCP_NODELAY. 동작은 그대로 두고
+   복사·할당·시스템콜만 줄인 S18의 규율이다
 
 참조 구현으로 넘어갈 때의 진입점: **원본 SRS**의 fMP4 인코더는
 `kernel/srs_kernel_mp4.hpp:2145/2161`(박스 클래스 트리를 쓰는 확장판), 호출부는
@@ -481,16 +562,19 @@ pending 큐 구조라 cond_wait 대신 콜백으로 깨운다). srs_simple에서
 ---
 
 _이 글은 [srs_simple](../README.md) 프로젝트의 RTMP 이론 시리즈 Part 11이다.
-코드 대조 기준: srs_simple `src/kernel/srs_kernel_mp4.{hpp,cpp}`
-(`SrsMp4M2tsInitEncoder::write:101/110`, `write_video_trak:201`,
-`SrsMp4M2tsSegmentEncoder::write_sample:526`, `flush:558`, `set_audio_tid` hpp:136),
+코드 대조 기준(S18 반영, 2026-09-04): srs_simple `src/kernel/srs_kernel_mp4.{hpp,cpp}`
+(`SrsMp4M2tsInitEncoder::write:93/102`, `write_video_trak:193`,
+`SrsMp4M2tsSegmentEncoder::write_sample:518`, `flush:550`, `set_audio_tid` hpp:145),
 `src/kernel/srs_kernel_codec.cpp`(`avc_demux_sps:607`),
-`src/app/srs_app_llhls.{hpp,cpp}`(`SrsLlHlsChunklist::generate:123`,
-`SrsLlHlsStorage::append_part:273`, `wait_for:381`, `reached:395`, `shrink:421`,
-`SrsLlHlsMuxer::on_sequence_header:491`, `maybe_cut:603`, `open_part:632`,
-`flush_part:668`, `SrsLlHls::on_audio:813`, `on_video:851`),
-`src/app/srs_app_http_conn.cpp`(`do_cycle:107`, `serve_llhls:221`,
-`serve_playlist:313`, `serve_part:359`, `hold:385`)
+`src/app/srs_app_llhls.{hpp,cpp}`(`SrsLlHlsPartPtr` hpp:90,
+`SrsLlHlsChunklist::generate:127`, `SrsLlHlsStorage::append_part:277/282`,
+`get_part:332`, `get_segment:355`, `wait_for:417`, `reached:431`, `find:446`,
+`shrink:458`, `refresh_playlist:468`, `SrsLlHlsMuxer::on_sequence_header:528`,
+`maybe_cut:640`, `open_part:669`, `flush_part:705`, `SrsLlHls::on_audio:851`,
+`on_video:889`),
+`src/app/srs_app_http_conn.cpp`(`do_cycle:117`, `serve_llhls:231`,
+`serve_playlist:320`, `serve_part:367`, `hold:401`, `serve_segment:424`,
+`write_response:447/459`)
 / 원본 SRS 6.0 `trunk/src/kernel/srs_kernel_mp4.hpp:2145/2161`
 / OME `src/modules/containers/bmff/fmp4_packager/fmp4_packager.cpp`,
 `fmp4_storage.cpp`, `src/projects/publishers/llhls/llhls_chunklist.cpp:423`,

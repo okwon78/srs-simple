@@ -18,6 +18,9 @@
 #include <srs_core.hpp>
 
 #include <string>
+#include <vector>
+
+#include <sys/uio.h>
 
 #include <srs_app_conn.hpp>
 #include <srs_app_st.hpp>
@@ -66,9 +69,15 @@ private:
     // 게시까지 100ms 슬라이스로 대기 — 사이마다 pull()로 종료를 확인한다 (§5.1 이디엄).
     // 게시/unpublish/타임아웃 어느 쪽이든 호출자는 그 시점 상태로 응답한다.
     virtual srs_error_t hold(SrsLlHlsStorage* storage, int64_t msn, int psn, srs_utime_t timeout);
+    // 완결 세그먼트 — 파트들을 writev로 이어 쓴다 (세그먼트 바이트를 만들지 않는다, S18).
+    virtual srs_error_t serve_segment(SrsLlHlsStorage* storage, int64_t msn);
     // Write a response with body, Content-Length exact, keep-alive.
-    virtual srs_error_t write_response(int code, std::string status, std::string content_type,
-        std::string cache_control, const std::string& body);
+    // 헤더+본문을 writev 1회로 보낸다 — 작은 응답(m3u8)이 Nagle/delayed-ACK에 걸리지
+    // 않게 (S18). iov판은 파트 페이로드를 복사 없이 직접 싣는 호출자용.
+    virtual srs_error_t write_response(int code, const std::string& status, const std::string& content_type,
+        const std::string& cache_control, const std::string& body);
+    virtual srs_error_t write_response(int code, const std::string& status, const std::string& content_type,
+        const std::string& cache_control, const std::vector<iovec>& body);
 // Interface ISrsStartable
 public:
     virtual srs_error_t start();

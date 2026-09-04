@@ -7,11 +7,13 @@
 #include <srs_app_http_conn.hpp>
 
 #include <ctype.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
 
-#include <sstream>
 #include <vector>
 
 #include <srs_app_config.hpp>
@@ -80,6 +82,14 @@ SrsHttpConn::SrsHttpConn(SrsServer* svr, srs_netfd_t c, string cip, int cport)
     ip = cip;
     port = cport;
     conn_close_ = false;
+
+    // TCP_NODELAY — LL-HLS는 0.5초마다 작은 응답(m3u8, 수 KB)을 보낸다. Nagle이
+    // 직전 세그먼트의 ACK(클라이언트 delayed-ACK 최대 수십 ms)까지 꼬리를 붙들면
+    // 그 지연이 파트 주기마다 재생 지연에 더해진다 (S18. RTMP 쪽은 원본 기본값대로 off).
+    if (stfd != SRS_NETFD_INVALID) {
+        int v = 1;
+        ::setsockopt(stfd, IPPROTO_TCP, TCP_NODELAY, &v, sizeof(v));
+    }
 
     trd = new SrsSTCoroutine("http", this);
 }
@@ -288,13 +298,10 @@ srs_error_t SrsHttpConn::serve_llhls(string path, string query)
         int64_t msn = -1, psn = -1;
         if (dot == string::npos) {
             if (srs_http_parse_int(base, msn)) {
-                string v;
-                if (storage->get_segment(msn, v)) {
-                    srs_trace("HTTP GET %s 200 %dB", path.c_str(), (int)v.length());
-                    return write_response(200, "OK", "video/mp4", "max-age=3600", v);
+                if ((err = serve_segment(storage, msn)) != srs_success) {
+                    return srs_error_wrap(err, "segment msn=%d", (int)msn);
                 }
-                srs_trace("HTTP GET %s 404 (no segment)", path.c_str());
-                return write_response(404, "Not Found", "text/plain; charset=utf-8", "no-cache", "404 not found\n");
+                return err;
             }
         } else {
             if (srs_http_parse_int(base.substr(0, dot), msn) && srs_http_parse_int(base.substr(dot + 1), psn)) {
@@ -332,8 +339,9 @@ srs_error_t SrsHttpConn::serve_playlist(SrsLlHlsStorage* storage, string query)
         }
 
         // 최신 + 2를 넘는 미래는 홀드하지 않는다 (스펙 관례 — PLANS.md §0).
-        if (msn > storage->latest_msn() + SRS_HTTP_MSN_AHEAD_MAX) {
-            srs_trace("HTTP GET m3u8 400 (msn=%d too far, latest=%d)", (int)msn, (int)storage->latest_msn());
+        int64_t latest = storage->latest_msn();
+        if (msn > latest + SRS_HTTP_MSN_AHEAD_MAX) {
+            srs_trace("HTTP GET m3u8 400 (msn=%d too far, latest=%d)", (int)msn, (int)latest);
             return write_response(400, "Bad Request", "text/plain; charset=utf-8", "no-cache", "400 bad request\n");
         }
 
@@ -360,10 +368,15 @@ srs_error_t SrsHttpConn::serve_part(SrsLlHlsStorage* storage, int64_t msn, int p
 {
     srs_error_t err = srs_success;
 
-    string v;
-    if (storage->get_part(msn, psn, v)) {
-        srs_trace("HTTP GET part %d.%d 200 %dB", (int)msn, psn, (int)v.length());
-        return write_response(200, "OK", "video/mp4", "max-age=3600", v);
+    // 파트는 shared_ptr로 받아 락 밖에서 소켓에 쓴다 — 페이로드 복사 없음 (S18).
+    // 이 참조가 살아 있는 동안은 윈도우에서 밀려나도 바이트가 해제되지 않는다.
+    SrsLlHlsPartPtr part;
+    if (storage->get_part(msn, psn, part)) {
+        srs_trace("HTTP GET part %d.%d 200 %dB", (int)msn, psn, (int)part->payload.length());
+        vector<iovec> body(1);
+        body[0].iov_base = (void*)part->payload.data();
+        body[0].iov_len = part->payload.length();
+        return write_response(200, "OK", "video/mp4", "max-age=3600", body);
     }
 
     // 아직 없는 파트 — 프리로드 힌트의 GET은 리소스가 생길 때까지 홀드 후 200 (스펙).
@@ -372,9 +385,12 @@ srs_error_t SrsHttpConn::serve_part(SrsLlHlsStorage* storage, int64_t msn, int p
         if ((err = hold(storage, msn, psn, SRS_HTTP_HOLD_TIMEOUT)) != srs_success) {
             return srs_error_wrap(err, "hold part");
         }
-        if (storage->get_part(msn, psn, v)) {
-            srs_trace("HTTP GET part %d.%d 200 %dB (held)", (int)msn, psn, (int)v.length());
-            return write_response(200, "OK", "video/mp4", "max-age=3600", v);
+        if (storage->get_part(msn, psn, part)) {
+            srs_trace("HTTP GET part %d.%d 200 %dB (held)", (int)msn, psn, (int)part->payload.length());
+            vector<iovec> body(1);
+            body[0].iov_base = (void*)part->payload.data();
+            body[0].iov_len = part->payload.length();
+            return write_response(200, "OK", "video/mp4", "max-age=3600", body);
         }
     }
 
@@ -405,30 +421,80 @@ srs_error_t SrsHttpConn::hold(SrsLlHlsStorage* storage, int64_t msn, int psn, sr
     return err;
 }
 
-srs_error_t SrsHttpConn::write_response(int code, string status, string content_type, string cache_control, const string& body)
+srs_error_t SrsHttpConn::serve_segment(SrsLlHlsStorage* storage, int64_t msn)
+{
+    // 완결 세그먼트 = 파트 페이로드의 연결. 파트 포인터 목록만 락 안에서 받고,
+    // 바이트는 writev가 파트별 iov로 이어 보낸다 — 세그먼트 크기(~수백 KB)의 임시
+    // 문자열을 만들지 않는다 (S18).
+    vector<SrsLlHlsPartPtr> parts;
+    if (!storage->get_segment(msn, parts)) {
+        srs_trace("HTTP GET segment %d 404 (no segment)", (int)msn);
+        return write_response(404, "Not Found", "text/plain; charset=utf-8", "no-cache", "404 not found\n");
+    }
+
+    vector<iovec> body(parts.size());
+    size_t total = 0;
+    for (size_t i = 0; i < parts.size(); i++) {
+        body[i].iov_base = (void*)parts[i]->payload.data();
+        body[i].iov_len = parts[i]->payload.length();
+        total += body[i].iov_len;
+    }
+
+    srs_trace("HTTP GET segment %d 200 %dB (%d parts)", (int)msn, (int)total, (int)parts.size());
+    return write_response(200, "OK", "video/mp4", "max-age=3600", body);
+}
+
+srs_error_t SrsHttpConn::write_response(int code, const string& status, const string& content_type, const string& cache_control, const string& body)
+{
+    vector<iovec> iovs;
+    if (!body.empty()) {
+        iovec iov;
+        iov.iov_base = (void*)body.data();
+        iov.iov_len = body.length();
+        iovs.push_back(iov);
+    }
+    return write_response(code, status, content_type, cache_control, iovs);
+}
+
+srs_error_t SrsHttpConn::write_response(int code, const string& status, const string& content_type, const string& cache_control, const vector<iovec>& body)
 {
     srs_error_t err = srs_success;
 
+    size_t content_length = 0;
+    for (size_t i = 0; i < body.size(); i++) {
+        content_length += body[i].iov_len;
+    }
+
     // CORS 허용 — hls.js 같은 브라우저 플레이어용. Content-Length는 keep-alive의
     // 전제다 — 정확해야 클라이언트가 응답 경계를 안다 (PLANS.md D4).
-    std::stringstream ss;
-    ss << "HTTP/1.1 " << code << " " << status << "\r\n"
-        << "Server: " << RTMP_SIG_SRS_SERVER << "\r\n"
-        << "Content-Type: " << content_type << "\r\n"
-        << "Content-Length: " << body.length() << "\r\n"
-        << "Cache-Control: " << cache_control << "\r\n"
-        << "Access-Control-Allow-Origin: *\r\n"
-        << "Connection: " << (conn_close_ ? "close" : "keep-alive") << "\r\n"
-        << "\r\n";
-    string header = ss.str();
-
-    if ((err = skt->write((void*)header.data(), header.length(), NULL)) != srs_success) {
-        return srs_error_wrap(err, "write header");
+    char header[512];
+    int nb_header = snprintf(header, sizeof(header),
+        "HTTP/1.1 %d %s\r\n"
+        "Server: %s\r\n"
+        "Content-Type: %s\r\n"
+        "Content-Length: %d\r\n"
+        "Cache-Control: %s\r\n"
+        "Access-Control-Allow-Origin: *\r\n"
+        "Connection: %s\r\n"
+        "\r\n",
+        code, status.c_str(), RTMP_SIG_SRS_SERVER, content_type.c_str(), (int)content_length,
+        cache_control.c_str(), conn_close_ ? "close" : "keep-alive");
+    if (nb_header <= 0 || nb_header >= (int)sizeof(header)) {
+        return srs_error_new(ERROR_HTTP_PARSE_HEADER, "response header too large");
     }
-    if (!body.empty()) {
-        if ((err = skt->write((void*)body.data(), body.length(), NULL)) != srs_success) {
-            return srs_error_wrap(err, "write body");
-        }
+
+    // 헤더와 본문을 한 writev로 — 한 번의 커널 진입, 그리고 헤더만 먼저 나가
+    // Nagle이 본문 꼬리를 붙드는 일이 없다 (S18. 생성자의 TCP_NODELAY와 짝).
+    vector<iovec> iovs;
+    iovs.reserve(body.size() + 1);
+    iovec h;
+    h.iov_base = header;
+    h.iov_len = (size_t)nb_header;
+    iovs.push_back(h);
+    iovs.insert(iovs.end(), body.begin(), body.end());
+
+    if ((err = skt->writev(&iovs[0], (int)iovs.size(), NULL)) != srs_success) {
+        return srs_error_wrap(err, "write response");
     }
 
     return err;
