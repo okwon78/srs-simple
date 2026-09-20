@@ -64,7 +64,7 @@ flowchart TB
 자체 — `SrsAmf0Any`와 그 서브클래스들, 그리고 `srs_amf0_read_*`/`srs_amf0_write_*`
 자유 함수들 — 만 다루고, 어떤 커맨드가 어떤 필드를 갖는지는 다음 파트로 미룬다.
 
-한 가지 인터페이스 관찰: AMF0 코덱은 소켓을 전혀 모른다. 모든 read/write가
+인터페이스에서 짚어둘 점 하나: AMF0 코덱은 소켓을 전혀 모른다. 모든 read/write가
 `SrsBuffer`(Part 2의 핸드셰이크 코드에서 처음 등장한 빅엔디언 바이트 커서) 하나만 받는다. 그래서 utest가
 메모리 배열만으로 코덱 전체를 검증할 수 있다 —
 [srs_utest_amf0.cpp](../utest/srs_utest_amf0.cpp)의 테스트 전부가 소켓 없이 돈다.

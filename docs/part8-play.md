@@ -67,7 +67,7 @@ sequenceDiagram
 ## 1. play까지 — 식별의 다른 갈래
 
 Part 6의 `identify_client`는 connect 다음에 오는 커맨드를 보고 클라이언트의 정체를
-판별하는 상태 기계였다. publisher는 releaseStream을 먼저 보내므로 그 자리에서 FMLE로
+판별하는 상태 기계였다. publisher는 releaseStream을 먼저 보내므로 그 자리에서 FMLE(Flash Media Live Encoder)로
 판정됐지만, player가 connect 다음에 보내는 것은 **createStream**이다.
 createStream만으로는 정체를 알 수 없다 — publish도 play도 그 뒤에 오기 때문이다. 그래서
 [`identify_client`](../src/protocol/srs_protocol_rtmp_stack.cpp#L1948)는

@@ -153,7 +153,7 @@ tcUrl 하나에서 서버는 다섯 가지를 뽑아야 한다: schema, host, po
 
 - `rtmp://show.com/live` — host 자체가 도메인이면 그대로 vhost
 - `rtmp://192.168.0.10/live?vhost=show.com` — IP로 접속하며 쿼리로 vhost 지정
-- `rtmp://ip/live...vhost...show.com` — FMLE가 `?`를 못 쓰던 시절의 흔적.
+- `rtmp://ip/live...vhost...show.com` — FMLE(Flash Media Live Encoder)가 `?`를 못 쓰던 시절의 흔적.
   파싱 첫 줄에서 `?vhost=`로 치환된다
 
 [`srs_discovery_tc_url`](../src/protocol/srs_protocol_utility.cpp#L36)
@@ -200,7 +200,7 @@ connect를 받은 서버가 응답하는 코드는
                                  클라이언트는 이것을 받고서야 다음 커맨드를 보낸다
 ```
 
-③이 ④보다 먼저인 이유는 Part 4에서 다뤘던 타이밍 규칙의 재방문이다: connect의
+③이 ④보다 먼저인 이유는 Part 4에서 다룬 타이밍 규칙 그대로다: connect의
 `_result`는 아래에서 보듯 370바이트 안팎으로, 기본 청크 크기 128을 넘는다.
 SetChunkSize를 먼저 보내지 않으면 응답이 여러 청크로 쪼개지고, 일부 클라이언트(OBS)가
 이를 소화하지 못했다 (원본 이슈 #454 —

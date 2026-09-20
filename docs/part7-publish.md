@@ -21,7 +21,7 @@
 
 이 글은 Part 6까지 읽었다고 가정한다.
 
-Part 6은 `identify_client`가 releaseStream을 보고 "이 클라이언트는 FMLE publisher다"라고
+Part 6은 `identify_client`가 releaseStream을 보고 "이 클라이언트는 FMLE(Flash Media Live Encoder) publisher다"라고
 판별하고 releaseStream의 `_result`까지 보낸 지점에서 끝났다. 이번 파트는 그 나머지
 절반이다: FCPublish부터 publish까지의 커맨드 시퀀스, 송출 허가장인
 onStatus(NetStream.Publish.Start), 그리고 허가가 떨어진 뒤 쏟아지는 진짜 화물 —
