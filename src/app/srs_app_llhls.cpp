@@ -420,9 +420,8 @@ bool SrsLlHlsStorage::wait_for(int64_t msn, int psn, srs_utime_t timeout)
 
     // 게시(notify_all)/unpublish로 깨어나고, 조건 미충족이면 타임아웃까지 재대기.
     // wait_for의 predicate가 spurious wakeup을 걸러 준다.
-    SrsLlHlsStorage* self = this;
-    cond_.wait_for(guard, chrono::microseconds(timeout), [self, msn, psn]() {
-        return !self->active_ || self->reached(msn, psn);
+    cond_.wait_for(guard, chrono::microseconds(timeout), [this, msn, psn]() {
+        return !active_ || reached(msn, psn);
     });
 
     return reached(msn, psn);
@@ -514,12 +513,7 @@ srs_error_t SrsLlHlsMuxer::update_config(SrsRequest* r)
     storage->update_config(_srs_config->llhls_segment_count, req->stream, part_target, segment_target);
 
     // 파트 상태 리셋. msn(storage)과 mfhd sequence(muxer)는 재publish에도 이어진다.
-    srs_freep(enc);
-    writer.data.clear();
-    part_open_ = false;
-    part_nb_samples = 0;
-    part_has_video = false;
-    part_independent = false;
+    clear_part();
     segment_duration = 0;
 
     return srs_success;
@@ -679,8 +673,7 @@ srs_error_t SrsLlHlsMuxer::open_part(SrsFormat* format, int64_t dts)
         }
     }
 
-    srs_freep(enc);
-    writer.data.clear();
+    clear_part();
 
     enc = new SrsMp4M2tsSegmentEncoder();
     // tid=1: video traf가 1, audio traf는 2 (단독 트랙이면 그 traf가 1) — S12 D2 규칙.
@@ -729,14 +722,20 @@ srs_error_t SrsLlHlsMuxer::flush_part(int64_t end_dts, bool close_segment)
         segment_duration += duration;
     }
 
+    clear_part();
+
+    return err;
+}
+
+// 진행 중 파트의 인코더/버퍼/집계를 비운다. open_part는 이 위에 새 파트를 연다.
+void SrsLlHlsMuxer::clear_part()
+{
     srs_freep(enc);
     writer.data.clear();
     part_open_ = false;
     part_nb_samples = 0;
     part_has_video = false;
     part_independent = false;
-
-    return err;
 }
 
 srs_error_t SrsLlHlsMuxer::write_init(SrsFormat* format)
@@ -758,13 +757,8 @@ srs_error_t SrsLlHlsMuxer::write_init(SrsFormat* format)
         return srs_error_wrap(err, "llhls: init encoder");
     }
 
-    if (has_video && has_audio) {
-        err = init_enc.write(format); // muxed: video tid=1 + audio tid=2 (D2)
-    } else if (has_video) {
-        err = init_enc.write(format, true, 1);
-    } else {
-        err = init_enc.write(format, false, 1);
-    }
+    // muxed면 video tid=1 + audio tid=2 (D2), 단일 트랙이면 그 트랙이 tid=1.
+    err = (has_video && has_audio) ? init_enc.write(format) : init_enc.write(format, has_video, 1);
     if (err != srs_success) {
         return srs_error_wrap(err, "llhls: write init.mp4");
     }
@@ -857,10 +851,7 @@ srs_error_t SrsLlHls::on_audio(SrsSharedPtrMessage* shared_audio, SrsFormat* for
     }
 
     // 아직 어떤 오디오도 파싱 전이거나 AAC가 아니면 무시 (기존 SrsHls와 동일한 필터).
-    if (!format->acodec || !format->audio) {
-        return err;
-    }
-    if (format->acodec->id != SrsAudioCodecIdAAC) {
+    if (!format->acodec || !format->audio || format->acodec->id != SrsAudioCodecIdAAC) {
         return err;
     }
 
@@ -869,12 +860,8 @@ srs_error_t SrsLlHls::on_audio(SrsSharedPtrMessage* shared_audio, SrsFormat* for
         return muxer->on_sequence_header(format);
     }
 
-    if (format->audio->nb_samples == 0) {
-        return err;
-    }
-
-    // 시퀀스 헤더 파싱 전의 raw 프레임은 디코딩 불가 — 드롭.
-    if (!format->acodec->is_aac_codec_ok()) {
+    // 빈 프레임과, 시퀀스 헤더 파싱 전의 raw 프레임(디코딩 불가)은 드롭.
+    if (format->audio->nb_samples == 0 || !format->acodec->is_aac_codec_ok()) {
         return err;
     }
 
@@ -895,10 +882,7 @@ srs_error_t SrsLlHls::on_video(SrsSharedPtrMessage* shared_video, SrsFormat* for
     }
 
     // 아직 어떤 비디오도 파싱 전이거나 H.264가 아니면 무시.
-    if (!format->vcodec || !format->video) {
-        return err;
-    }
-    if (format->vcodec->id != SrsVideoCodecIdAVC) {
+    if (!format->vcodec || !format->video || format->vcodec->id != SrsVideoCodecIdAVC) {
         return err;
     }
 
@@ -907,12 +891,10 @@ srs_error_t SrsLlHls::on_video(SrsSharedPtrMessage* shared_video, SrsFormat* for
         return muxer->on_sequence_header(format);
     }
 
-    // NALU가 아니거나(end-of-sequence 등) 샘플이 없으면 무시 (기존 TS 경로와 동일 가드).
-    if (format->video->avc_packet_type != SrsVideoAvcFrameTraitNALU || format->video->nb_samples == 0) {
-        return err;
-    }
-
-    if (!format->vcodec->is_avc_codec_ok()) {
+    // NALU가 아니거나(end-of-sequence 등) 샘플이 없거나, 시퀀스 헤더 파싱 전이면
+    // 무시 (기존 TS 경로와 동일 가드).
+    if (format->video->avc_packet_type != SrsVideoAvcFrameTraitNALU
+        || format->video->nb_samples == 0 || !format->vcodec->is_avc_codec_ok()) {
         return err;
     }
 

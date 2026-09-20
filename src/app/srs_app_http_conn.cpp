@@ -73,6 +73,15 @@ static bool srs_http_parse_int(const string& v, int64_t& out)
     return true;
 }
 
+// 문자열 본문을 가리키는 iov 한 개 — 바이트는 복사하지 않는다 (호출자가 수명 보장).
+static iovec srs_http_iov(const string& v)
+{
+    iovec iov;
+    iov.iov_base = (void*)v.data();
+    iov.iov_len = v.length();
+    return iov;
+}
+
 SrsHttpConn::SrsHttpConn(SrsServer* svr, srs_netfd_t c, string cip, int cport)
 {
     stfd = c;
@@ -167,12 +176,12 @@ srs_error_t SrsHttpConn::do_cycle()
 
         if (method != "GET") {
             srs_trace("HTTP %s %s 405", method.c_str(), path.c_str());
-            if ((err = write_response(405, "Method Not Allowed", "text/plain; charset=utf-8", "no-cache", "405 method not allowed\n")) != srs_success) {
+            if ((err = write_error(405)) != srs_success) {
                 return srs_error_wrap(err, "write 405");
             }
         } else if (path.empty() || path[0] != '/' || path.find("..") != string::npos) {
             srs_trace("HTTP GET %s 404 (invalid path)", path.c_str());
-            if ((err = write_response(404, "Not Found", "text/plain; charset=utf-8", "no-cache", "404 not found\n")) != srs_success) {
+            if ((err = write_error(404)) != srs_success) {
                 return srs_error_wrap(err, "write 404");
             }
         } else {
@@ -230,8 +239,6 @@ srs_error_t SrsHttpConn::read_request(string& header, bool& eof)
 
 srs_error_t SrsHttpConn::serve_llhls(string path, string query)
 {
-    srs_error_t err = srs_success;
-
     // path를 '/' 세그먼트로 나눈다: "/live/livestream.m3u8" → {"live", "livestream.m3u8"}.
     vector<string> segs;
     size_t pos = 1;
@@ -261,7 +268,7 @@ srs_error_t SrsHttpConn::serve_llhls(string path, string query)
 
     if (app.empty() || stream.empty()) {
         srs_trace("HTTP GET %s 404", path.c_str());
-        return write_response(404, "Not Found", "text/plain; charset=utf-8", "no-cache", "404 not found\n");
+        return write_error(404);
     }
 
     // 스트림의 storage를 찾는다. source는 프로세스 종료까지 살고(§5.6 S8) 포인터가
@@ -270,7 +277,7 @@ srs_error_t SrsHttpConn::serve_llhls(string path, string query)
     SrsLiveSource* source = _srs_sources->fetch(app, stream);
     if (!source) {
         srs_trace("HTTP GET %s 404 (no source)", path.c_str());
-        return write_response(404, "Not Found", "text/plain; charset=utf-8", "no-cache", "404 not found\n");
+        return write_error(404);
     }
     SrsLlHlsStorage* storage = source->llhls_storage();
 
@@ -284,7 +291,7 @@ srs_error_t SrsHttpConn::serve_llhls(string path, string query)
         string v;
         if (!storage->get_init(v)) {
             srs_trace("HTTP GET %s 404 (no init)", path.c_str());
-            return write_response(404, "Not Found", "text/plain; charset=utf-8", "no-cache", "404 not found\n");
+            return write_error(404);
         }
         srs_trace("HTTP GET %s 200 %dB", path.c_str(), (int)v.length());
         return write_response(200, "OK", "video/mp4", "max-age=3600", v);
@@ -298,23 +305,15 @@ srs_error_t SrsHttpConn::serve_llhls(string path, string query)
         int64_t msn = -1, psn = -1;
         if (dot == string::npos) {
             if (srs_http_parse_int(base, msn)) {
-                if ((err = serve_segment(storage, msn)) != srs_success) {
-                    return srs_error_wrap(err, "segment msn=%d", (int)msn);
-                }
-                return err;
+                return serve_segment(storage, msn);
             }
-        } else {
-            if (srs_http_parse_int(base.substr(0, dot), msn) && srs_http_parse_int(base.substr(dot + 1), psn)) {
-                if ((err = serve_part(storage, msn, (int)psn)) != srs_success) {
-                    return srs_error_wrap(err, "part msn=%d psn=%d", (int)msn, (int)psn);
-                }
-                return err;
-            }
+        } else if (srs_http_parse_int(base.substr(0, dot), msn) && srs_http_parse_int(base.substr(dot + 1), psn)) {
+            return serve_part(storage, msn, (int)psn);
         }
     }
 
     srs_trace("HTTP GET %s 404", path.c_str());
-    return write_response(404, "Not Found", "text/plain; charset=utf-8", "no-cache", "404 not found\n");
+    return write_error(404);
 }
 
 srs_error_t SrsHttpConn::serve_playlist(SrsLlHlsStorage* storage, string query)
@@ -335,14 +334,14 @@ srs_error_t SrsHttpConn::serve_playlist(SrsLlHlsStorage* storage, string query)
         }
         if (!ok) {
             srs_trace("HTTP GET m3u8 400 (bad directives: %s)", query.c_str());
-            return write_response(400, "Bad Request", "text/plain; charset=utf-8", "no-cache", "400 bad request\n");
+            return write_error(400);
         }
 
         // 최신 + 2를 넘는 미래는 홀드하지 않는다 (스펙 관례 — PLANS.md §0).
         int64_t latest = storage->latest_msn();
         if (msn > latest + SRS_HTTP_MSN_AHEAD_MAX) {
             srs_trace("HTTP GET m3u8 400 (msn=%d too far, latest=%d)", (int)msn, (int)latest);
-            return write_response(400, "Bad Request", "text/plain; charset=utf-8", "no-cache", "400 bad request\n");
+            return write_error(400);
         }
 
         // 게시까지 홀드 — 타임아웃이면 그 시점 최신으로 200 (PLANS.md S15).
@@ -351,13 +350,13 @@ srs_error_t SrsHttpConn::serve_playlist(SrsLlHlsStorage* storage, string query)
         }
     } else if (has_psn) {
         srs_trace("HTTP GET m3u8 400 (_HLS_part without _HLS_msn)");
-        return write_response(400, "Bad Request", "text/plain; charset=utf-8", "no-cache", "400 bad request\n");
+        return write_error(400);
     }
 
     string v;
     if (!storage->get_playlist(v)) {
         srs_trace("HTTP GET m3u8 404 (no playlist)");
-        return write_response(404, "Not Found", "text/plain; charset=utf-8", "no-cache", "404 not found\n");
+        return write_error(404);
     }
 
     srs_trace("HTTP GET m3u8 200 %dB%s%s", (int)v.length(), has_msn ? " " : "", has_msn ? query.c_str() : "");
@@ -371,31 +370,25 @@ srs_error_t SrsHttpConn::serve_part(SrsLlHlsStorage* storage, int64_t msn, int p
     // 파트는 shared_ptr로 받아 락 밖에서 소켓에 쓴다 — 페이로드 복사 없음 (S18).
     // 이 참조가 살아 있는 동안은 윈도우에서 밀려나도 바이트가 해제되지 않는다.
     SrsLlHlsPartPtr part;
-    if (storage->get_part(msn, psn, part)) {
-        srs_trace("HTTP GET part %d.%d 200 %dB", (int)msn, psn, (int)part->payload.length());
-        vector<iovec> body(1);
-        body[0].iov_base = (void*)part->payload.data();
-        body[0].iov_len = part->payload.length();
-        return write_response(200, "OK", "video/mp4", "max-age=3600", body);
-    }
+    bool held = false;
 
     // 아직 없는 파트 — 프리로드 힌트의 GET은 리소스가 생길 때까지 홀드 후 200 (스펙).
     // 그럴듯한 미래(최신+2 이내)만 홀드한다. 만료된 과거는 hold가 즉시 돌아와 404.
-    if (msn <= storage->latest_msn() + SRS_HTTP_MSN_AHEAD_MAX) {
+    if (!storage->get_part(msn, psn, part) && msn <= storage->latest_msn() + SRS_HTTP_MSN_AHEAD_MAX) {
         if ((err = hold(storage, msn, psn, SRS_HTTP_HOLD_TIMEOUT)) != srs_success) {
             return srs_error_wrap(err, "hold part");
         }
-        if (storage->get_part(msn, psn, part)) {
-            srs_trace("HTTP GET part %d.%d 200 %dB (held)", (int)msn, psn, (int)part->payload.length());
-            vector<iovec> body(1);
-            body[0].iov_base = (void*)part->payload.data();
-            body[0].iov_len = part->payload.length();
-            return write_response(200, "OK", "video/mp4", "max-age=3600", body);
-        }
+        held = storage->get_part(msn, psn, part);
     }
 
-    srs_trace("HTTP GET part %d.%d 404", (int)msn, psn);
-    return write_response(404, "Not Found", "text/plain; charset=utf-8", "no-cache", "404 not found\n");
+    if (!part) {
+        srs_trace("HTTP GET part %d.%d 404", (int)msn, psn);
+        return write_error(404);
+    }
+
+    srs_trace("HTTP GET part %d.%d 200 %dB%s", (int)msn, psn, (int)part->payload.length(), held ? " (held)" : "");
+    vector<iovec> body(1, srs_http_iov(part->payload));
+    return write_response(200, "OK", "video/mp4", "max-age=3600", body);
 }
 
 srs_error_t SrsHttpConn::hold(SrsLlHlsStorage* storage, int64_t msn, int psn, srs_utime_t timeout)
@@ -429,14 +422,13 @@ srs_error_t SrsHttpConn::serve_segment(SrsLlHlsStorage* storage, int64_t msn)
     vector<SrsLlHlsPartPtr> parts;
     if (!storage->get_segment(msn, parts)) {
         srs_trace("HTTP GET segment %d 404 (no segment)", (int)msn);
-        return write_response(404, "Not Found", "text/plain; charset=utf-8", "no-cache", "404 not found\n");
+        return write_error(404);
     }
 
     vector<iovec> body(parts.size());
     size_t total = 0;
     for (size_t i = 0; i < parts.size(); i++) {
-        body[i].iov_base = (void*)parts[i]->payload.data();
-        body[i].iov_len = parts[i]->payload.length();
+        body[i] = srs_http_iov(parts[i]->payload);
         total += body[i].iov_len;
     }
 
@@ -448,10 +440,7 @@ srs_error_t SrsHttpConn::write_response(int code, const string& status, const st
 {
     vector<iovec> iovs;
     if (!body.empty()) {
-        iovec iov;
-        iov.iov_base = (void*)body.data();
-        iov.iov_len = body.length();
-        iovs.push_back(iov);
+        iovs.push_back(srs_http_iov(body));
     }
     return write_response(code, status, content_type, cache_control, iovs);
 }
@@ -498,6 +487,22 @@ srs_error_t SrsHttpConn::write_response(int code, const string& status, const st
     }
 
     return err;
+}
+
+srs_error_t SrsHttpConn::write_error(int code)
+{
+    // LL-HLS 라우팅이 내는 오류는 3종뿐 — 상태줄과 본문이 코드에서 정해진다.
+    const char* status = "Not Found";
+    const char* body = "404 not found\n";
+    if (code == 400) {
+        status = "Bad Request";
+        body = "400 bad request\n";
+    } else if (code == 405) {
+        status = "Method Not Allowed";
+        body = "405 method not allowed\n";
+    }
+
+    return write_response(code, status, "text/plain; charset=utf-8", "no-cache", body);
 }
 
 srs_error_t SrsHttpConn::start()

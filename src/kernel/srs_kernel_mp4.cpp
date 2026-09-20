@@ -23,14 +23,20 @@ static int srs_mp4_box_open(SrsBuffer* b, const char* type)
     return start;
 }
 
+// 이미 자리만 잡아 둔 4바이트 빅엔디언을 나중에 채운다 — 박스 size와 trun의
+// data_offset이 같은 규칙으로 되돌아온다.
+static void srs_mp4_patch_4bytes(SrsBuffer* b, int pos, int32_t v)
+{
+    uint8_t* p = (uint8_t*)b->data() + pos;
+    p[0] = (uint8_t)((v >> 24) & 0xff);
+    p[1] = (uint8_t)((v >> 16) & 0xff);
+    p[2] = (uint8_t)((v >> 8) & 0xff);
+    p[3] = (uint8_t)(v & 0xff);
+}
+
 static void srs_mp4_box_close(SrsBuffer* b, int start)
 {
-    int size = b->pos() - start;
-    uint8_t* p = (uint8_t*)b->data() + start;
-    p[0] = (uint8_t)((size >> 24) & 0xff);
-    p[1] = (uint8_t)((size >> 16) & 0xff);
-    p[2] = (uint8_t)((size >> 8) & 0xff);
-    p[3] = (uint8_t)(size & 0xff);
+    srs_mp4_patch_4bytes(b, start, b->pos() - start);
 }
 
 // The full box: 박스 프리앰블 + version(1B) + flags(3B).
@@ -48,6 +54,86 @@ static void srs_mp4_write_matrix(SrsBuffer* b)
     b->write_4bytes(0x00010000); b->write_4bytes(0); b->write_4bytes(0);
     b->write_4bytes(0); b->write_4bytes(0x00010000); b->write_4bytes(0);
     b->write_4bytes(0); b->write_4bytes(0); b->write_4bytes(0x40000000);
+}
+
+// ---- trak 하위 박스 (video/audio가 공유하고, 다른 값만 인자로 받는다) ----
+
+// tkhd. flags 3 = enabled | in_movie. width/height는 16.16 fixed.
+static void srs_mp4_write_tkhd(SrsBuffer* b, int tid, int volume, int width, int height)
+{
+    int tkhd = srs_mp4_full_box_open(b, "tkhd", 0, 3);
+    b->write_4bytes(0); // creation_time
+    b->write_4bytes(0); // modification_time
+    b->write_4bytes(tid); // track_ID
+    b->write_4bytes(0); // reserved
+    b->write_4bytes(0); // duration
+    b->write_4bytes(0); b->write_4bytes(0); // reserved
+    b->write_2bytes(0); // layer
+    b->write_2bytes(0); // alternate_group
+    b->write_2bytes((int16_t)volume); // volume — video 0, audio 1.0
+    b->write_2bytes(0); // reserved
+    srs_mp4_write_matrix(b);
+    b->write_4bytes(width << 16); // width
+    b->write_4bytes(height << 16); // height
+    srs_mp4_box_close(b, tkhd);
+}
+
+// mdhd. timescale 1000(ms), language 'und' = 0x55c4.
+static void srs_mp4_write_mdhd(SrsBuffer* b)
+{
+    int mdhd = srs_mp4_full_box_open(b, "mdhd", 0, 0);
+    b->write_4bytes(0); // creation_time
+    b->write_4bytes(0); // modification_time
+    b->write_4bytes(1000); // timescale
+    b->write_4bytes(0); // duration
+    b->write_2bytes(0x55c4); // language: und
+    b->write_2bytes(0); // pre_defined
+    srs_mp4_box_close(b, mdhd);
+}
+
+// hdlr. handler_type(vide/soun)과 이름만 다르다.
+static void srs_mp4_write_hdlr(SrsBuffer* b, const char* type, const char* name)
+{
+    int hdlr = srs_mp4_full_box_open(b, "hdlr", 0, 0);
+    b->write_4bytes(0); // pre_defined
+    b->write_bytes((char*)type, 4); // handler_type
+    b->write_4bytes(0); b->write_4bytes(0); b->write_4bytes(0); // reserved
+    b->write_bytes((char*)name, (int)strlen(name));
+    b->write_1bytes(0); // null-terminated
+    srs_mp4_box_close(b, hdlr);
+}
+
+// dinf > dref > url (self-contained — 미디어가 이 파일 안에 있다).
+static void srs_mp4_write_dinf(SrsBuffer* b)
+{
+    int dinf = srs_mp4_box_open(b, "dinf");
+    int dref = srs_mp4_full_box_open(b, "dref", 0, 0);
+    b->write_4bytes(1); // entry_count
+    int url = srs_mp4_full_box_open(b, "url ", 0, 1);
+    srs_mp4_box_close(b, url);
+    srs_mp4_box_close(b, dref);
+    srs_mp4_box_close(b, dinf);
+}
+
+// Fragmented라 샘플 테이블은 전부 빈 채움 (스펙상 필수 박스라 생략은 불가).
+static void srs_mp4_write_empty_sample_tables(SrsBuffer* b)
+{
+    int stts = srs_mp4_full_box_open(b, "stts", 0, 0);
+    b->write_4bytes(0); // entry_count
+    srs_mp4_box_close(b, stts);
+
+    int stsc = srs_mp4_full_box_open(b, "stsc", 0, 0);
+    b->write_4bytes(0); // entry_count
+    srs_mp4_box_close(b, stsc);
+
+    int stsz = srs_mp4_full_box_open(b, "stsz", 0, 0);
+    b->write_4bytes(0); // sample_size
+    b->write_4bytes(0); // sample_count
+    srs_mp4_box_close(b, stsz);
+
+    int stco = srs_mp4_full_box_open(b, "stco", 0, 0);
+    b->write_4bytes(0); // entry_count
+    srs_mp4_box_close(b, stco);
 }
 
 SrsMp4Sample::SrsMp4Sample()
@@ -194,51 +280,13 @@ void SrsMp4M2tsInitEncoder::write_video_trak(SrsBuffer* b, SrsVideoCodecConfig* 
 {
     int trak = srs_mp4_box_open(b, "trak");
 
-    // tkhd. flags 3 = enabled | in_movie.
     // width/height는 SPS에서 파싱한 해상도 (S16 — avc_demux_sps). Chrome MSE는
     // avc1/tkhd의 해상도 0을 invalid decoder config로 거부한다 (§5.6 S16).
-    if (true) {
-        int tkhd = srs_mp4_full_box_open(b, "tkhd", 0, 3);
-        b->write_4bytes(0); // creation_time
-        b->write_4bytes(0); // modification_time
-        b->write_4bytes(tid); // track_ID
-        b->write_4bytes(0); // reserved
-        b->write_4bytes(0); // duration
-        b->write_4bytes(0); b->write_4bytes(0); // reserved
-        b->write_2bytes(0); // layer
-        b->write_2bytes(0); // alternate_group
-        b->write_2bytes(0); // volume — video는 0
-        b->write_2bytes(0); // reserved
-        srs_mp4_write_matrix(b);
-        b->write_4bytes(vcodec->width << 16); // width (16.16 fixed)
-        b->write_4bytes(vcodec->height << 16); // height
-        srs_mp4_box_close(b, tkhd);
-    }
+    srs_mp4_write_tkhd(b, tid, 0, vcodec->width, vcodec->height);
 
     int mdia = srs_mp4_box_open(b, "mdia");
-
-    // mdhd. language 'und' = 0x55c4.
-    if (true) {
-        int mdhd = srs_mp4_full_box_open(b, "mdhd", 0, 0);
-        b->write_4bytes(0); // creation_time
-        b->write_4bytes(0); // modification_time
-        b->write_4bytes(1000); // timescale
-        b->write_4bytes(0); // duration
-        b->write_2bytes(0x55c4); // language: und
-        b->write_2bytes(0); // pre_defined
-        srs_mp4_box_close(b, mdhd);
-    }
-
-    // hdlr.
-    if (true) {
-        int hdlr = srs_mp4_full_box_open(b, "hdlr", 0, 0);
-        b->write_4bytes(0); // pre_defined
-        b->write_bytes((char*)"vide", 4); // handler_type
-        b->write_4bytes(0); b->write_4bytes(0); b->write_4bytes(0); // reserved
-        b->write_bytes((char*)"VideoHandler", 12);
-        b->write_1bytes(0); // null-terminated
-        srs_mp4_box_close(b, hdlr);
-    }
+    srs_mp4_write_mdhd(b);
+    srs_mp4_write_hdlr(b, "vide", "VideoHandler");
 
     int minf = srs_mp4_box_open(b, "minf");
 
@@ -250,16 +298,7 @@ void SrsMp4M2tsInitEncoder::write_video_trak(SrsBuffer* b, SrsVideoCodecConfig* 
         srs_mp4_box_close(b, vmhd);
     }
 
-    // dinf > dref > url (self-contained).
-    if (true) {
-        int dinf = srs_mp4_box_open(b, "dinf");
-        int dref = srs_mp4_full_box_open(b, "dref", 0, 0);
-        b->write_4bytes(1); // entry_count
-        int url = srs_mp4_full_box_open(b, "url ", 0, 1);
-        srs_mp4_box_close(b, url);
-        srs_mp4_box_close(b, dref);
-        srs_mp4_box_close(b, dinf);
-    }
+    srs_mp4_write_dinf(b);
 
     int stbl = srs_mp4_box_open(b, "stbl");
 
@@ -293,25 +332,7 @@ void SrsMp4M2tsInitEncoder::write_video_trak(SrsBuffer* b, SrsVideoCodecConfig* 
         srs_mp4_box_close(b, stsd);
     }
 
-    // Fragmented라 샘플 테이블은 전부 빈 채움 (스펙상 필수 박스라 생략은 불가).
-    if (true) {
-        int stts = srs_mp4_full_box_open(b, "stts", 0, 0);
-        b->write_4bytes(0); // entry_count
-        srs_mp4_box_close(b, stts);
-
-        int stsc = srs_mp4_full_box_open(b, "stsc", 0, 0);
-        b->write_4bytes(0); // entry_count
-        srs_mp4_box_close(b, stsc);
-
-        int stsz = srs_mp4_full_box_open(b, "stsz", 0, 0);
-        b->write_4bytes(0); // sample_size
-        b->write_4bytes(0); // sample_count
-        srs_mp4_box_close(b, stsz);
-
-        int stco = srs_mp4_full_box_open(b, "stco", 0, 0);
-        b->write_4bytes(0); // entry_count
-        srs_mp4_box_close(b, stco);
-    }
+    srs_mp4_write_empty_sample_tables(b);
 
     srs_mp4_box_close(b, stbl);
     srs_mp4_box_close(b, minf);
@@ -323,47 +344,12 @@ void SrsMp4M2tsInitEncoder::write_audio_trak(SrsBuffer* b, SrsAudioCodecConfig* 
 {
     int trak = srs_mp4_box_open(b, "trak");
 
-    // tkhd. audio는 volume 1.0.
-    if (true) {
-        int tkhd = srs_mp4_full_box_open(b, "tkhd", 0, 3);
-        b->write_4bytes(0); // creation_time
-        b->write_4bytes(0); // modification_time
-        b->write_4bytes(tid); // track_ID
-        b->write_4bytes(0); // reserved
-        b->write_4bytes(0); // duration
-        b->write_4bytes(0); b->write_4bytes(0); // reserved
-        b->write_2bytes(0); // layer
-        b->write_2bytes(0); // alternate_group
-        b->write_2bytes(0x0100); // volume 1.0
-        b->write_2bytes(0); // reserved
-        srs_mp4_write_matrix(b);
-        b->write_4bytes(0); // width
-        b->write_4bytes(0); // height
-        srs_mp4_box_close(b, tkhd);
-    }
+    // audio는 volume 1.0, 해상도 없음.
+    srs_mp4_write_tkhd(b, tid, 0x0100, 0, 0);
 
     int mdia = srs_mp4_box_open(b, "mdia");
-
-    if (true) {
-        int mdhd = srs_mp4_full_box_open(b, "mdhd", 0, 0);
-        b->write_4bytes(0); // creation_time
-        b->write_4bytes(0); // modification_time
-        b->write_4bytes(1000); // timescale
-        b->write_4bytes(0); // duration
-        b->write_2bytes(0x55c4); // language: und
-        b->write_2bytes(0); // pre_defined
-        srs_mp4_box_close(b, mdhd);
-    }
-
-    if (true) {
-        int hdlr = srs_mp4_full_box_open(b, "hdlr", 0, 0);
-        b->write_4bytes(0); // pre_defined
-        b->write_bytes((char*)"soun", 4); // handler_type
-        b->write_4bytes(0); b->write_4bytes(0); b->write_4bytes(0); // reserved
-        b->write_bytes((char*)"SoundHandler", 12);
-        b->write_1bytes(0); // null-terminated
-        srs_mp4_box_close(b, hdlr);
-    }
+    srs_mp4_write_mdhd(b);
+    srs_mp4_write_hdlr(b, "soun", "SoundHandler");
 
     int minf = srs_mp4_box_open(b, "minf");
 
@@ -375,15 +361,7 @@ void SrsMp4M2tsInitEncoder::write_audio_trak(SrsBuffer* b, SrsAudioCodecConfig* 
         srs_mp4_box_close(b, smhd);
     }
 
-    if (true) {
-        int dinf = srs_mp4_box_open(b, "dinf");
-        int dref = srs_mp4_full_box_open(b, "dref", 0, 0);
-        b->write_4bytes(1); // entry_count
-        int url = srs_mp4_full_box_open(b, "url ", 0, 1);
-        srs_mp4_box_close(b, url);
-        srs_mp4_box_close(b, dref);
-        srs_mp4_box_close(b, dinf);
-    }
+    srs_mp4_write_dinf(b);
 
     int stbl = srs_mp4_box_open(b, "stbl");
 
@@ -439,24 +417,7 @@ void SrsMp4M2tsInitEncoder::write_audio_trak(SrsBuffer* b, SrsAudioCodecConfig* 
         srs_mp4_box_close(b, stsd);
     }
 
-    if (true) {
-        int stts = srs_mp4_full_box_open(b, "stts", 0, 0);
-        b->write_4bytes(0); // entry_count
-        srs_mp4_box_close(b, stts);
-
-        int stsc = srs_mp4_full_box_open(b, "stsc", 0, 0);
-        b->write_4bytes(0); // entry_count
-        srs_mp4_box_close(b, stsc);
-
-        int stsz = srs_mp4_full_box_open(b, "stsz", 0, 0);
-        b->write_4bytes(0); // sample_size
-        b->write_4bytes(0); // sample_count
-        srs_mp4_box_close(b, stsz);
-
-        int stco = srs_mp4_full_box_open(b, "stco", 0, 0);
-        b->write_4bytes(0); // entry_count
-        srs_mp4_box_close(b, stco);
-    }
+    srs_mp4_write_empty_sample_tables(b);
 
     srs_mp4_box_close(b, stbl);
     srs_mp4_box_close(b, minf);
@@ -593,16 +554,10 @@ srs_error_t SrsMp4M2tsSegmentEncoder::flush(uint64_t& dts)
 
     int moof_bytes = b.pos();
     if (video_offset_pos >= 0) {
-        uint8_t* p = (uint8_t*)b.data() + video_offset_pos;
-        int32_t v = moof_bytes + 8;
-        p[0] = (uint8_t)((v >> 24) & 0xff); p[1] = (uint8_t)((v >> 16) & 0xff);
-        p[2] = (uint8_t)((v >> 8) & 0xff); p[3] = (uint8_t)(v & 0xff);
+        srs_mp4_patch_4bytes(&b, video_offset_pos, moof_bytes + 8);
     }
     if (audio_offset_pos >= 0) {
-        uint8_t* p = (uint8_t*)b.data() + audio_offset_pos;
-        int32_t v = (int32_t)(moof_bytes + 8 + video_bytes);
-        p[0] = (uint8_t)((v >> 24) & 0xff); p[1] = (uint8_t)((v >> 16) & 0xff);
-        p[2] = (uint8_t)((v >> 8) & 0xff); p[3] = (uint8_t)(v & 0xff);
+        srs_mp4_patch_4bytes(&b, audio_offset_pos, (int32_t)(moof_bytes + 8 + video_bytes));
     }
 
     // Write moof + mdat(header + video bytes + audio bytes) in one writev —
