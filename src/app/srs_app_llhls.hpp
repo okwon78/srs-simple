@@ -274,6 +274,8 @@ private:
     // @param end_dts 파트의 끝 dts(ms) — 마지막 샘플 duration 계산(S12 flush)과
     //                파트 duration의 기준.
     virtual srs_error_t flush_part(int64_t end_dts, bool close_segment);
+    // 진행 중 파트 상태 비우기 (update_config/open_part/flush_part 공통).
+    virtual void clear_part();
     // init.mp4 재생성 → storage 교체. 사용 가능한 코덱(video/audio)만 싣는다.
     virtual srs_error_t write_init(SrsFormat* format);
 };

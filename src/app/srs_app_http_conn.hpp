@@ -78,6 +78,8 @@ private:
         const std::string& cache_control, const std::string& body);
     virtual srs_error_t write_response(int code, const std::string& status, const std::string& content_type,
         const std::string& cache_control, const std::vector<iovec>& body);
+    // 오류 응답 — LL-HLS 라우팅이 쓰는 400/404/405는 상태줄과 본문이 코드로 정해진다.
+    virtual srs_error_t write_error(int code);
 // Interface ISrsStartable
 public:
     virtual srs_error_t start();

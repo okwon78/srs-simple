@@ -45,7 +45,7 @@
 - SRS와 동일한 레이어링: `core → kernel → protocol → app → main`
 - SRS와 동일한 클래스 이름 (`SrsProtocol`, `SrsRtmpServer`, `SrsRtmpConn`, `SrsLiveSource`, `SrsLiveConsumer`, `SrsGopCache`, `SrsHls`, `SrsTsContext`, `SrsMp4M2tsInitEncoder` …. LL-HLS 앱 계층은 원본에 없어 OME 구조를 SRS 네이밍으로 — §5.6 S13)
 - SRS와 동일한 이디엄: `srs_error_t` 에러 체인, `SrsBuffer` 바이트 커서, `MockBufferIO` 기반 프로토콜 단위 테스트
-- 원본의 동일 경로(약 20,000줄+)를 개념 손실 없이 축소 — 실제 결과는 `src/` 19,275줄 + `utest/` 6,269줄 (S16 LL-HLS 포함. S10 시점 16,003/4,396줄, S9 시점 12,436/3,897줄). 원본 로직을 그대로 옮긴 데다 교육용 주석 비중이 커서 줄 수 자체는 초기 목표(4,000~5,000줄)보다 크다
+- 원본의 동일 경로(약 20,000줄+)를 개념 손실 없이 축소 — 실제 결과는 `src/` 19,338줄 + `utest/` 6,269줄 (S16 LL-HLS 포함. S10 시점 16,003/4,396줄, S9 시점 12,436/3,897줄). 원본 로직을 그대로 옮긴 데다 교육용 주석 비중이 커서 줄 수 자체는 초기 목표(4,000~5,000줄)보다 크다
 
 ### 비목표 (원본에서 의도적으로 제거)
 
@@ -209,7 +209,7 @@ S→C onMetaData → AVC/AAC 시퀀스 헤더 → GOP 캐시 → 라이브 메�
 | `src/kernel/srs_kernel_io.hpp` | `kernel/srs_kernel_io.hpp` | S10에서 원본 위치로 복원 (그전엔 protocol_io에 병합) | 38 |
 | `src/kernel/srs_kernel_file.{hpp,cpp}` | `kernel/srs_kernel_file.*` + `srs_kernel_utility.cpp`의 path 헬퍼 | Writer/Reader 최소만 (S10) | 265 |
 | `src/kernel/srs_kernel_ts.{hpp,cpp}` | `kernel/srs_kernel_ts.*` (5,900줄) | 인코더만. 패킷 클래스 트리 제거 (S10, §5.6) | 766 |
-| `src/kernel/srs_kernel_mp4.{hpp,cpp}` | `kernel/srs_kernel_mp4.*` (9,000줄, DASH 경로) | fMP4 인코더 2종만. 박스 클래스 트리 제거, muxed 확장 (S12, §5.6). S18: 트랙별 연속 버퍼 | 878 |
+| `src/kernel/srs_kernel_mp4.{hpp,cpp}` | `kernel/srs_kernel_mp4.*` (9,000줄, DASH 경로) | fMP4 인코더 2종만. 박스 클래스 트리 제거, muxed 확장 (S12, §5.6). S18: 트랙별 연속 버퍼. S19: trak 하위 박스 공용 헬퍼 (§5.6) | 833 |
 | `src/protocol/srs_protocol_io.hpp` | `protocol/srs_protocol_io.hpp` | 프로토콜 IO 인터페이스 (kernel_io 포함) | 76 |
 | `src/protocol/srs_protocol_stream.{hpp,cpp}` | `protocol/srs_protocol_stream.*` | `SrsFastStream::grow/read_slice`. merged-read 제거 | 184 |
 | `src/protocol/srs_protocol_amf0.{hpp,cpp}` | `protocol/srs_protocol_amf0.*` (1,779줄) | 7타입 서브셋 | 1,716 |
@@ -225,8 +225,8 @@ S→C onMetaData → AVC/AAC 시퀀스 헤더 → GOP 캐시 → 라이브 메�
 | `src/app/srs_app_source.{hpp,cpp}` | `app/srs_app_source.*` (2,812줄) | Source/Consumer/GopCache/MetaCache/Jitter/Queue + `SrsOriginHub`(S10, HLS만) | 1,658 |
 | `src/app/srs_app_fragment.{hpp,cpp}` | `app/srs_app_fragment.*` | 세그먼트 수명주기 + 롤링 윈도우 (S10) | 314 |
 | `src/app/srs_app_hls.{hpp,cpp}` | `app/srs_app_hls.*` (1,900줄) | 암호화/ts_floor/훅 제거 (S10, §5.6) | 963 |
-| `src/app/srs_app_llhls.{hpp,cpp}` | (원본에 없음 — OME `fmp4_packager`/`fmp4_storage`/`llhls_chunklist` 구조 차용) | LL-HLS 파트 컷·인메모리 윈도우·플레이리스트 (S13/S14, §5.6). S18: shared_ptr 파트·무복사 게시 | 1,236 |
-| `src/app/srs_app_http_conn.{hpp,cpp}` | `app/srs_app_http_conn.*` (+ OME `llhls_session`의 블로킹 조건) | S11에서 삭제한 것을 S15에서 LL-HLS 전용으로 부활 — keep-alive + 블로킹 서빙 (§5.6 S15). S18: writev 응답·TCP_NODELAY | 639 |
+| `src/app/srs_app_llhls.{hpp,cpp}` | (원본에 없음 — OME `fmp4_packager`/`fmp4_storage`/`llhls_chunklist` 구조 차용) | LL-HLS 파트 컷·인메모리 윈도우·플레이리스트 (S13/S14, §5.6). S18: shared_ptr 파트·무복사 게시 | 1,220 |
+| `src/app/srs_app_http_conn.{hpp,cpp}` | `app/srs_app_http_conn.*` (+ OME `llhls_session`의 블로킹 조건) | S11에서 삭제한 것을 S15에서 LL-HLS 전용으로 부활 — keep-alive + 블로킹 서빙 (§5.6 S15). S18: writev 응답·TCP_NODELAY | 646 |
 | `conf/nginx.conf` | (원본 `srs_app_http_conn.*`/`srs_app_http_static.*`의 역할 대체) | TS-HLS 파일/플레이어 페이지 서빙 — S10의 정적 파일 `SrsHttpConn`을 S11에서 외부 nginx로 교체 (§5.6 S11). LL-HLS(:8081)는 nginx를 거치지 않는다 | — |
 | `src/app/srs_app_config.{hpp,cpp}` | `app/srs_app_config.*` (10,138줄) | 상수 구조체 (S10: hls_*, S13: llhls_* 추가) | 77 |
 | `src/main/srs_main_server.cpp` | `main/srs_main_server.cpp` | main() | 63 |
@@ -606,6 +606,15 @@ LL-HLS(S12~S16)의 설계 근거·참조 조사·세션별 확정 기록의 원�
 - `SrsLlHlsStorage::find`는 선형 탐색 대신 O(1) 인덱싱 — 윈도우 안 msn은 연속(`next_msn_++` 후 앞에서만 pop)이라 `msn - front->msn`이 곧 deque 인덱스. `SrsLlHlsBufferWriter::writev`는 총량을 먼저 reserve
 - 하지 않은 것: `refresh_playlist`의 stringstream 재생성(초당 2회, 수십 µs — 게시 순서 보장을 위해 락 안에 남긴다), 요청마다의 `srs_trace`(블로킹 리로드 관찰이 교육 포인트), init/m3u8의 복사(수 KB)
 
+#### LL-HLS 경로 간결화 (S19) — 2026-09-20
+
+동작·바이트 레이아웃·플레이리스트를 그대로 둔 채 **중복만** 걷어냈다. 변경 전 빌드와
+init.mp4·세그먼트 바이트가 md5 일치하고 utest 130개도 그대로 통과한다.
+
+- `srs_kernel_mp4.cpp`: video/audio trak이 글자 그대로 중복하던 `tkhd`/`mdhd`/`hdlr`/`dinf`/빈 샘플 테이블을 파일-로컬 헬퍼(`srs_mp4_write_*`)로 묶고 다른 값만 인자로 받는다. 박스 size와 trun data_offset의 빅엔디언 후패치도 `srs_mp4_patch_4bytes` 하나로. 원본에서는 박스 클래스 트리가 이 역할을 하므로(S12에서 제거) 헬퍼에 대응물이 없다 — 이름에 박스 이름을 그대로 남겨 원본 대조는 유지
+- `srs_app_llhls.cpp`: 파트 상태 리셋 3곳을 `SrsLlHlsMuxer::clear_part`로, init.mp4 쓰기의 3분기를 muxed/단일 2분기로, `SrsLlHls::on_audio`/`on_video`의 코덱 가드를 조건 하나씩으로 합쳤다. `wait_for`의 `self` 별칭은 제거(C++11의 `this` 캡처)
+- `srs_app_http_conn.cpp`: 여덟 번 반복되던 404/400/405 응답을 `write_error(code)`로, 문자열→iov 조립을 `srs_http_iov`로, `serve_part`의 즉시/홀드 후 200 응답을 한 갈래로 모았다. `.m4s` 라우팅 안쪽의 `srs_error_wrap`은 `do_cycle`이 이미 같은 path로 감싸므로 제거
+
 ---
 
 ## 6. 빌드
@@ -675,7 +684,7 @@ srs_simple의 각 지점을 이해했다면, 원본에서 아래를 열면 같�
 
 ## 8. 구현 이력과 검증 상태
 
-구현은 S1~S9 세션(RTMP, 2026-08-08 ~ 2026-08-09), S10 세션(HLS, 2026-08-21), S11 세션(HTTP 서빙을 외부 nginx로 이관, 2026-08-22), S12~S16 세션(LL-HLS, 2026-08-22 — 계획·설계 기록은 [PLANS.md](PLANS.md)/[TASKS.md](TASKS.md))으로 진행해 **전부 완료**되었다. S17(2026-08-23)은 서버 코드 변경 없이 데모 자산만 손봤고(§5.6 S17), S18(2026-09-04)은 LL-HLS 경로의 복사·할당·시스템콜만 줄였다(§5.6 S18). 세션 순서가 곧 **코드 읽는 순서**이며 의존 순서다:
+구현은 S1~S9 세션(RTMP, 2026-08-08 ~ 2026-08-09), S10 세션(HLS, 2026-08-21), S11 세션(HTTP 서빙을 외부 nginx로 이관, 2026-08-22), S12~S16 세션(LL-HLS, 2026-08-22 — 계획·설계 기록은 [PLANS.md](PLANS.md)/[TASKS.md](TASKS.md))으로 진행해 **전부 완료**되었다. S17(2026-08-23)은 서버 코드 변경 없이 데모 자산만 손봤고(§5.6 S17), S18(2026-09-04)은 LL-HLS 경로의 복사·할당·시스템콜만 줄였고, S19(2026-09-20)는 같은 경로의 중복 코드만 걷어냈다(§5.6 S18/S19). 세션 순서가 곧 **코드 읽는 순서**이며 의존 순서다:
 
 ```text
 S1 core/kernel 기반 → S2 I/O·스레드 → S3 핸드셰이크·메시지 모델 → S4 AMF0
@@ -686,6 +695,7 @@ S1 core/kernel 기반 → S2 I/O·스레드 → S3 핸드셰이크·메시지 �
   → S15 SrsHttpConn 부활·블로킹 서빙 → S16 통합 검증·문서 (2026-08-22, §5.6 S12~S16)
   → S17 데모 자산 정리: 플레이어 페이지 개명·라이브 전용 정책·publish 스크립트 (2026-08-23, §5.6 S17)
   → S18 LL-HLS 성능: 파트 무복사 게시·shared_ptr 서빙·writev 응답 (2026-09-04, §5.6 S18)
+  → S19 LL-HLS 경로 간결화: 박스/응답/파트 상태의 중복 제거 (2026-09-20, §5.6 S19)
 ```
 
 | 세션 | 내용 | 산출 파일 |
@@ -708,6 +718,7 @@ S1 core/kernel 기반 → S2 I/O·스레드 → S3 핸드셰이크·메시지 �
 | S16 | LL-HLS 통합 검증(hls.js 실재생·지연 실측) + SPS 해상도 파싱 + 문서 | `srs_kernel_codec.*`(avc_demux_sps), `srs_kernel_buffer.*`(SrsBitBuffer), `srs_kernel_mp4.cpp`(해상도 기록), `www/llhls.html`, `docs/part11-llhls.md`, `README.md`, `runner.sh` |
 | S17 | 데모 자산 정리 (서버 코드 변경 없음) | `www/hls.html`(개명·라이브 전용·지연 표시), `www/llhls.html`(라이브 전용), `publish.sh`(재인코딩), `conf/nginx.conf`, 문서 전반 |
 | S18 | LL-HLS 성능 개선 (동작 불변 — 복사·할당·시스템콜만 감소) | `srs_kernel_mp4.*`(트랙별 버퍼·writev flush), `srs_app_llhls.*`(shared_ptr 파트·move 게시·O(1) find), `srs_app_http_conn.*`(writev 응답·TCP_NODELAY·세그먼트 iov), `docs/part11-llhls.md`(§6.1 S18 해설 추가·코드 앵커 재동기화) |
+| S19 | LL-HLS 경로 간결화 (동작 불변 — 중복 제거) | `srs_kernel_mp4.cpp`(trak 하위 박스·후패치 헬퍼), `srs_app_llhls.*`(clear_part), `srs_app_http_conn.*`(write_error·srs_http_iov), `docs/part11-llhls.md`(코드 앵커 재동기화) |
 
 ### 검증 상태
 
