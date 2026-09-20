@@ -67,7 +67,7 @@ ffplay rtmp://localhost/live/test
 
 **4. publish 중단 → 재시작 (REPUBLISH)** — publisher를 `Ctrl+C`(FCUnpublish)로 끊으면 서버 로그에 `rtmp: retry for republish`가 찍히고, 다시 publish하면 붙어 있던 플레이어가 이어서 재생된다.
 
-**5. OBS publish** — 설정 → 방송: 서비스 *사용자 지정*, 서버 `rtmp://localhost/live`, 스트림 키 `test`. OBS는 SetChunkSize(4096)를 먼저 보내는 FMLE 스타일 publisher로 식별된다.
+**5. OBS publish** — 설정 → 방송: 서비스 *사용자 지정*, 서버 `rtmp://localhost/live`, 스트림 키 `test`. OBS는 SetChunkSize(4096)를 먼저 보내는 FMLE(Flash Media Live Encoder) 스타일 publisher로 식별된다.
 
 **6. VLC play** — `VLC rtmp://localhost/live/test` (또는 GUI에서 네트워크 스트림 열기).
 

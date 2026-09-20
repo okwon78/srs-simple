@@ -113,7 +113,7 @@ client                              server
 
 필요 타입만: **Number(0x00, 8B IEEE754 BE), Boolean(0x01), String(0x02, u16 len), Object(0x03, `00 00 09`로 종료), Null(0x05), Undefined(0x06), EcmaArray(0x08, 읽기 전용 — ffmpeg의 onMetaData)**.
 
-- Object의 **프로퍼티 삽입 순서는 보존**해야 함 (`vector<pair<string, SrsAmf0Any*>>`) — 원본 주석: 정렬하면 FMLE가 죽음
+- Object의 **프로퍼티 삽입 순서는 보존**해야 함 (`vector<pair<string, SrsAmf0Any*>>`) — 원본 주석: 정렬하면 FMLE(Flash Media Live Encoder)가 죽음
 - StrictArray/Date/LongString/XmlDocument/TypedObject/Reference는 불필요
 
 ### 2.5 커맨드 흐름
@@ -444,7 +444,7 @@ struct SrsSimpleConfig {
 
 - `srs_chunk_header_c0/c3`는 원본 `kernel/srs_kernel_utility.cpp:1184/1259`에 있으나, utility 파일을 만들지 않으므로 `srs_kernel_flv.{hpp,cpp}`에 병합. `SRS_CONSTS_RTMP_MAX_FMT0/3_HEADER_SIZE`(원본 `srs_kernel_consts.hpp`)도 같은 이유로 `srs_kernel_flv.hpp`에 정의
 - `SrsHandshakeBytes`는 원본 `rtmp_stack.{hpp,cpp}` 소속이나 rtmp_stack보다 먼저 필요하므로 `srs_protocol_rtmp_handshake.{hpp,cpp}`로 이동. 서버 역할만 유지 — 클라이언트 측(`create_c0c1/create_c2/read_s0s1s2`, `handshake_with_server`)과 RTMP 프록시(`proxy_real_ip`) 제거
-- `srs_random_generate`(원본 utility)는 handshake cpp의 파일-로컬 static으로 축소
+- `srs_random_generate`(원본 utility)는 handshake cpp의 파일-로컬 static으로 축소. 원본이 첫 호출에 `srandom(time|pid)` 시드를 거는 `srs_random()` 래퍼도 함께 제거 — 시드 없는 `random()`이라 매 실행 동일 시퀀스지만, 심플 핸드셰이크에서 이 바이트를 검증하는 상대가 없어 무해 (docs/part2 §2.2 해설)
 - `SrsSharedPtrMessage`: 원본의 `copy2()`(헤더 없는 복사, RTC 경로용)를 `copy()`에 병합, `_srs_pps_objs_msgs` 통계 카운터 제거
 - `srs_kernel_codec`: 레거시 FLV 헤더만 판별 (enhanced-RTMP ext header/HEVC 분기 제거), enum은 필요한 값만 유지(이름/값은 원본과 동일)
 - 핸드셰이크는 `SrsHandshakeBytes`를 호출자(`SrsRtmpServer::handshake`)가 소유하는 구조 — 원본은 성공 후 `dispose()`로 3KB 반납

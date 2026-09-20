@@ -144,7 +144,7 @@ fMP4는 DASH의 컨테이너이기도 해서, 원본 SRS의 DASH 경로에 인�
   연속 버퍼**(`video_data_`/`audio_data_`)에 이어 붙이고(파트당 샘플 복사는 이
   memcpy 1회뿐), `flush`는 moof + mdat 헤더 + 두 버퍼를 **writev 1회**로 내보낸다.
   mdat이 `[video 샘플들][audio 샘플들]` 순서이고 trun의 `data_offset`이 트랙당
-  하나라, 트랙별로만 연속이면 충분하다는 관찰이 근거다 (S18 — 샘플마다 `new[]`
+  하나라, 트랙별로만 연속이면 충분하기 때문이다 (S18 — 샘플마다 `new[]`
   하던 초기 구현과 출력 바이트는 동일하다. §6.1)
 
 원본 9,000줄짜리 `srs_kernel_mp4`는 박스마다 클래스가 있는 트리인데, srs_simple은

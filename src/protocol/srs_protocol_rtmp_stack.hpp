@@ -157,7 +157,7 @@ private:
     // For peer in
 private:
     // The chunk stream to decode RTMP messages.
-    // 원본은 cid<16에 대해 cs_cache 배열을 추가로 두지만(성능), map만 사용한다 — CLAUDE.md §5.6.
+    // 원본은 csid<16에 대해 cs_cache 배열을 추가로 두지만(성능), map만 사용한다 — CLAUDE.md §5.6.
     std::map<int, SrsChunkStream *> chunk_streams;
     // The bytes buffer cache, recv from skt, provides services for the stream.
     SrsFastStream *in_buffer;
